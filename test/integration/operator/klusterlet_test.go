@@ -81,7 +81,7 @@ var _ = ginkgo.Describe("Klusterlet", func() {
 		}
 
 		agentLabelSelector = metav1.FormatLabelSelector(&metav1.LabelSelector{
-			MatchLabels: helpers.GetKlusterletAgentLabels(klusterlet),
+			MatchLabels: helpers.GetKlusterletAgentLabels(klusterlet, false),
 		})
 
 		hubKubeConfigSecret = &corev1.Secret{
@@ -786,6 +786,74 @@ var _ = ginkgo.Describe("Klusterlet", func() {
 				gomega.Expect(actual.Spec.Template.Spec.HostAliases[0].IP).Should(gomega.Equal(hubApiServerHostAliasIP))
 				gomega.Expect(len(actual.Spec.Template.Spec.HostAliases[0].Hostnames)).Should(gomega.Equal(1))
 				gomega.Expect(actual.Spec.Template.Spec.HostAliases[0].Hostnames[0]).Should(gomega.Equal(hubApiServerHostAliasHostname))
+				return true
+			}, eventuallyTimeout, eventuallyInterval).Should(gomega.BeTrue())
+		})
+
+		ginkgo.It("Deployment should be updated when klusterlet claim configure is changed", func() {
+			_, err := operatorClient.OperatorV1().Klusterlets().Create(context.Background(), klusterlet, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Eventually(func() bool {
+				if _, err := kubeClient.AppsV1().Deployments(klusterletNamespace).Get(context.Background(), workDeploymentName, metav1.GetOptions{}); err != nil {
+					return false
+				}
+				return true
+			}, eventuallyTimeout, eventuallyInterval).Should(gomega.BeTrue())
+
+			// Check if generations are correct
+			gomega.Eventually(func() bool {
+				actual, err := operatorClient.OperatorV1().Klusterlets().Get(context.Background(), klusterlet.Name, metav1.GetOptions{})
+				if err != nil {
+					return false
+				}
+
+				if actual.Generation != actual.Status.ObservedGeneration {
+					return false
+				}
+
+				return true
+			}, eventuallyTimeout, eventuallyInterval).Should(gomega.BeTrue())
+
+			gomega.Eventually(func() error {
+				klusterlet, err = operatorClient.OperatorV1().Klusterlets().Get(context.Background(), klusterlet.Name, metav1.GetOptions{})
+				if err != nil {
+					return err
+				}
+				klusterlet.Spec.RegistrationConfiguration = &operatorapiv1.RegistrationConfiguration{
+					ClusterClaimConfiguration: &operatorapiv1.ClusterClaimConfiguration{
+						MaxCustomClusterClaims:       2,
+						ReservedClusterClaimSuffixes: []string{"reserved1.io", "reserved2.io"},
+					},
+				}
+				_, err = operatorClient.OperatorV1().Klusterlets().Update(context.Background(), klusterlet, metav1.UpdateOptions{})
+				return err
+			}, eventuallyTimeout, eventuallyInterval).Should(gomega.Succeed())
+
+			gomega.Eventually(func() bool {
+				actual, err := kubeClient.AppsV1().Deployments(klusterletNamespace).Get(context.Background(), registrationDeploymentName, metav1.GetOptions{})
+				if err != nil {
+					return false
+				}
+				gomega.Expect(len(actual.Spec.Template.Spec.Containers)).Should(gomega.Equal(1))
+				if len(actual.Spec.Template.Spec.Containers[0].Args) != 9 {
+					return false
+				}
+				return actual.Spec.Template.Spec.Containers[0].Args[7] == "--max-custom-cluster-claims=2" &&
+					actual.Spec.Template.Spec.Containers[0].Args[8] == "--reserved-cluster-claim-suffixes=reserved1.io,reserved2.io"
+			}, eventuallyTimeout, eventuallyInterval).Should(gomega.BeTrue())
+
+			// Check if generations are correct
+			gomega.Eventually(func() bool {
+				actual, err := operatorClient.OperatorV1().Klusterlets().Get(context.Background(), klusterlet.Name, metav1.GetOptions{})
+				if err != nil {
+					return false
+				}
+
+				if actual.Generation != actual.Status.ObservedGeneration {
+					return false
+				}
+
 				return true
 			}, eventuallyTimeout, eventuallyInterval).Should(gomega.BeTrue())
 		})

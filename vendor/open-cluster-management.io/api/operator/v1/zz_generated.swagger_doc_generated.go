@@ -22,6 +22,7 @@ func (AddOnManagerConfiguration) SwaggerDoc() map[string]string {
 var map_AwsIrsaConfig = map[string]string{
 	"hubClusterArn":          "This represents the hub cluster ARN Example - arn:eks:us-west-2:12345678910:cluster/hub-cluster1",
 	"autoApprovedIdentities": "AutoApprovedIdentities represent a list of approved arn patterns",
+	"disableManagedIam":      "DisableManagedIam disables creation and management of IAM roles and policies on the hub. If true, all AWS permissions for awsirsa registration must be managed manually by the administrator. Used in cases where IAM permissions cannot be granted to OCM, or to run an EKS hub with non-aws spoke clusters.",
 	"tags":                   "List of tags to be added to AWS resources created by hub while processing awsirsa registration request Example - \"product:v1:tenant:app-name=My-App\"",
 }
 
@@ -48,9 +49,10 @@ func (ClusterManager) SwaggerDoc() map[string]string {
 }
 
 var map_ClusterManagerDeployOption = map[string]string{
-	"":       "ClusterManagerDeployOption describes the deployment options for cluster-manager",
-	"mode":   "Mode can be Default or Hosted. In Default mode, the Hub is installed as a whole and all parts of Hub are deployed in the same cluster. In Hosted mode, only crd and configurations are installed on one cluster(defined as hub-cluster). Controllers run in another cluster (defined as management-cluster) and connect to the hub with the kubeconfig in secret of \"external-hub-kubeconfig\"(a kubeconfig of hub-cluster with cluster-admin permission). Note: Do not modify the Mode field once it's applied.",
-	"hosted": "Hosted includes configurations we need for clustermanager in the Hosted mode.",
+	"":        "ClusterManagerDeployOption describes the deployment options for cluster-manager",
+	"mode":    "Mode can be Default or Hosted. In Default mode, the Hub is installed as a whole and all parts of Hub are deployed in the same cluster. In Hosted mode, only crd and configurations are installed on one cluster(defined as hub-cluster). Controllers run in another cluster (defined as management-cluster) and connect to the hub with the kubeconfig in secret of \"external-hub-kubeconfig\"(a kubeconfig of hub-cluster with cluster-admin permission). Note: Do not modify the Mode field once it's applied.",
+	"default": "Default includes configurations for clustermanager in the Default mode",
+	"hosted":  "Hosted includes configurations we need for clustermanager in the Hosted mode.",
 }
 
 func (ClusterManagerDeployOption) SwaggerDoc() map[string]string {
@@ -95,6 +97,16 @@ var map_ClusterManagerStatus = map[string]string{
 
 func (ClusterManagerStatus) SwaggerDoc() map[string]string {
 	return map_ClusterManagerStatus
+}
+
+var map_DefaultClusterManagerConfiguration = map[string]string{
+	"":                                 "DefaultClusterManagerConfiguration represents customized configurations for clustermanager in the Default mode",
+	"registrationWebhookConfiguration": "RegistrationWebhookConfiguration represents the customized webhook-server configuration of registration.",
+	"workWebhookConfiguration":         "WorkWebhookConfiguration represents the customized webhook-server configuration of work.",
+}
+
+func (DefaultClusterManagerConfiguration) SwaggerDoc() map[string]string {
+	return map_DefaultClusterManagerConfiguration
 }
 
 var map_FeatureGate = map[string]string{
@@ -183,6 +195,18 @@ func (WebhookConfiguration) SwaggerDoc() map[string]string {
 	return map_WebhookConfiguration
 }
 
+var map_WebhookDefaultConfiguration = map[string]string{
+	"":                       "WebhookDefaultConfiguration represents configuration for webhooks running in \"Default\" mode in the hub cluster",
+	"port":                   "Port represents the port of a webhook-server. The default value of Port is 9443.",
+	"healthProbeBindAddress": "HealthProbeBindAddress represents the healthcheck address of a webhook-server. The default value is \":8000\". Healthchecks may be disabled by setting a value of \"0\" or \"\".",
+	"metricsBindAddress":     "MetricsBindAddress represents the metrics address of a webhook-server. The default value is \":8080\" Metrics may be disabled by setting a value of \"0\" or \"\".",
+	"hostNetwork":            "HostNetwork enables running webhook pods with hostNetwork: true This may be required in some installations, such as EKS with Calico CNI, to allow the API Server to communicate with the webhook pods.",
+}
+
+func (WebhookDefaultConfiguration) SwaggerDoc() map[string]string {
+	return map_WebhookDefaultConfiguration
+}
+
 var map_WorkConfiguration = map[string]string{
 	"featureGates": "FeatureGates represents the list of feature gates for work If it is set empty, default feature gates will be used. If it is set, featuregate/Foo is an example of one item in FeatureGates:\n  1. If featuregate/Foo does not exist, registration-operator will discard it\n  2. If featuregate/Foo exists and is false by default. It is now possible to set featuregate/Foo=[false|true]\n  3. If featuregate/Foo exists and is true by default. If a cluster-admin upgrading from 1 to 2 wants to continue having featuregate/Foo=false,\n \the can set featuregate/Foo=false before upgrading. Let's say the cluster-admin wants featuregate/Foo=false.",
 	"workDriver":   "WorkDriver represents the type of work driver. Possible values are \"kube\", \"mqtt\", or \"grpc\". If not provided, the default value is \"kube\". If set to non-\"kube\" drivers, the klusterlet need to use the same driver. and the driver configuration must be provided in a secret named \"work-driver-config\" in the namespace where the cluster manager is running, adhering to the following structure: config.yaml: |\n  <driver-config-in-yaml>\n\nFor detailed driver configuration, please refer to the sdk-go documentation: https://github.com/open-cluster-management-io/sdk-go/blob/main/pkg/cloudevents/README.md#supported-protocols-and-drivers",
@@ -194,7 +218,8 @@ func (WorkConfiguration) SwaggerDoc() map[string]string {
 
 var map_AwsIrsa = map[string]string{
 	"hubClusterArn":     "The arn of the hub cluster (ie: an EKS cluster). This will be required to pass information to hub, which hub will use to create IAM identities for this klusterlet. Example - arn:eks:us-west-2:12345678910:cluster/hub-cluster1.",
-	"managedClusterArn": "The arn of the managed cluster (ie: an EKS cluster). This will be required to generate the md5hash which will be used as a suffix to create IAM role on hub as well as used by kluslerlet-agent, to assume role suffixed with the md5hash, on startup. Example - arn:eks:us-west-2:12345678910:cluster/managed-cluster1.",
+	"managedClusterArn": "The arn of the managed cluster (ie: an EKS cluster). This will be used when managed IAM is enabled to generate the md5hash as a suffix to create IAM role on hub as well as used by kluslerlet-agent, to assume role suffixed with the md5hash, on startup. Example - arn:eks:us-west-2:12345678910:cluster/managed-cluster1.",
+	"iamConfigSecret":   "IamConfigSecret is the name of a secret containing \"config\" and/or \"credentials\" files mounted to /.aws/config and /.aws/credentials respectively. More Info: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html",
 }
 
 func (AwsIrsa) SwaggerDoc() map[string]string {
@@ -313,8 +338,8 @@ var map_RegistrationConfiguration = map[string]string{
 	"clientCertExpirationSeconds": "clientCertExpirationSeconds represents the seconds of a client certificate to expire. If it is not set or 0, the default duration seconds will be set by the hub cluster. If the value is larger than the max signing duration seconds set on the hub cluster, the max signing duration seconds will be set.",
 	"featureGates":                "FeatureGates represents the list of feature gates for registration If it is set empty, default feature gates will be used. If it is set, featuregate/Foo is an example of one item in FeatureGates:\n  1. If featuregate/Foo does not exist, registration-operator will discard it\n  2. If featuregate/Foo exists and is false by default. It is now possible to set featuregate/Foo=[false|true]\n  3. If featuregate/Foo exists and is true by default. If a cluster-admin upgrading from 1 to 2 wants to continue having featuregate/Foo=false,\n \the can set featuregate/Foo=false before upgrading. Let's say the cluster-admin wants featuregate/Foo=false.",
 	"clusterAnnotations":          "ClusterAnnotations is annotations with the reserve prefix \"agent.open-cluster-management.io\" set on ManagedCluster when creating only, other actors can update it afterwards.",
-	"kubeAPIQPS":                  "KubeAPIQPS indicates the maximum QPS while talking with apiserver of hub cluster from the spoke cluster. If it is set empty, use the default value: 50",
-	"kubeAPIBurst":                "KubeAPIBurst indicates the maximum burst of the throttle while talking with apiserver of hub cluster from the spoke cluster. If it is set empty, use the default value: 100",
+	"kubeAPIQPS":                  "KubeAPIQPS indicates the maximum QPS while talking with apiserver on the spoke cluster. If it is set empty, use the default value: 50",
+	"kubeAPIBurst":                "KubeAPIBurst indicates the maximum burst of the throttle while talking with apiserver on the spoke cluster. If it is set empty, use the default value: 100",
 	"bootstrapKubeConfigs":        "BootstrapKubeConfigs defines the ordered list of bootstrap kubeconfigs. The order decides which bootstrap kubeconfig to use first when rebootstrap.\n\nWhen the agent loses the connection to the current hub over HubConnectionTimeoutSeconds, or the managedcluster CR is set `hubAcceptsClient=false` on the hub, the controller marks the related bootstrap kubeconfig as \"failed\".\n\nA failed bootstrapkubeconfig won't be used for the duration specified by SkipFailedBootstrapKubeConfigSeconds. But if the user updates the content of a failed bootstrapkubeconfig, the \"failed\" mark will be cleared.",
 	"registrationDriver":          "This provides driver details required to register with hub",
 	"clusterClaimConfiguration":   "ClusterClaimConfiguration represents the configuration of ClusterClaim Effective only when the `ClusterClaim` feature gate is enabled.",
@@ -345,9 +370,12 @@ func (ServerURL) SwaggerDoc() map[string]string {
 
 var map_WorkAgentConfiguration = map[string]string{
 	"featureGates":                           "FeatureGates represents the list of feature gates for work If it is set empty, default feature gates will be used. If it is set, featuregate/Foo is an example of one item in FeatureGates:\n  1. If featuregate/Foo does not exist, registration-operator will discard it\n  2. If featuregate/Foo exists and is false by default. It is now possible to set featuregate/Foo=[false|true]\n  3. If featuregate/Foo exists and is true by default. If a cluster-admin upgrading from 1 to 2 wants to continue having featuregate/Foo=false,\n \the can set featuregate/Foo=false before upgrading. Let's say the cluster-admin wants featuregate/Foo=false.",
-	"kubeAPIQPS":                             "KubeAPIQPS indicates the maximum QPS while talking with apiserver of hub cluster from the spoke cluster. If it is set empty, use the default value: 50",
-	"kubeAPIBurst":                           "KubeAPIBurst indicates the maximum burst of the throttle while talking with apiserver of hub cluster from the spoke cluster. If it is set empty, use the default value: 100",
+	"kubeAPIQPS":                             "KubeAPIQPS indicates the maximum QPS while talking with apiserver on the spoke cluster. If it is set empty, use the default value: 50",
+	"kubeAPIBurst":                           "KubeAPIBurst indicates the maximum burst of the throttle while talking with apiserver on the spoke cluster. If it is set empty, use the default value: 100",
+	"hubKubeAPIQPS":                          "HubKubeAPIQPS indicates the maximum QPS while talking with apiserver on the hub cluster. If it is set empty, use the default value: 50",
+	"hubKubeAPIBurst":                        "HubKubeAPIBurst indicates the maximum burst of the throttle while talking with apiserver on the hub cluster. If it is set empty, use the default value: 100",
 	"appliedManifestWorkEvictionGracePeriod": "AppliedManifestWorkEvictionGracePeriod is the eviction grace period the work agent will wait before evicting the AppliedManifestWorks, whose corresponding ManifestWorks are missing on the hub cluster, from the managed cluster. If not present, the default value of the work agent will be used.",
+	"statusSyncInterval":                     "StatusSyncInterval is the interval for the work agent to check the status of ManifestWorks. Larger value means less frequent status sync and less api calls to the managed cluster, vice versa. The value(x) should be: 5s <= x <= 1h.",
 }
 
 func (WorkAgentConfiguration) SwaggerDoc() map[string]string {

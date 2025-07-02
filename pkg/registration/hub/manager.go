@@ -12,6 +12,8 @@ import (
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
+	"k8s.io/client-go/rest"
+	generate "k8s.io/kubectl/pkg/generate"
 	cpclientset "sigs.k8s.io/cluster-inventory-api/client/clientset/versioned"
 	cpinformerv1alpha1 "sigs.k8s.io/cluster-inventory-api/client/informers/externalversions"
 
@@ -56,6 +58,8 @@ type HubManagerOptions struct {
 	AutoApprovedCSRUsers       []string
 	AutoApprovedARNPatterns    []string
 	AwsResourceTags            []string
+	Labels                     string
+	DisableManagedIam          bool
 }
 
 // NewHubManagerOptions returns a HubManagerOptions
@@ -83,11 +87,14 @@ func (m *HubManagerOptions) AddFlags(fs *pflag.FlagSet) {
 			"The flag works only when ResourceCleanup feature gate is enable.")
 	fs.StringVar(&m.HubClusterArn, "hub-cluster-arn", m.HubClusterArn,
 		"Hub Cluster Arn required to connect to Hub and create IAM Roles and Policies")
+	fs.BoolVar(&m.DisableManagedIam, "disable-managed-iam", m.DisableManagedIam, "Disable IAM role and access entry management for spoke clusters")
 	fs.StringSliceVar(&m.AutoApprovedCSRUsers, "auto-approved-csr-users", m.AutoApprovedCSRUsers,
 		"A bootstrap user list whose cluster registration requests can be automatically approved.")
 	fs.StringSliceVar(&m.AutoApprovedARNPatterns, "auto-approved-arn-patterns", m.AutoApprovedARNPatterns,
 		"A list of AWS EKS ARN patterns such that an EKS cluster will be auto approved if its ARN matches with any of the patterns")
 	fs.StringSliceVar(&m.AwsResourceTags, "aws-resource-tags", m.AwsResourceTags, "A list of tags to apply to AWS resources created through the OCM controllers")
+	fs.StringVar(&m.Labels, "labels", m.Labels,
+		"Labels to be added to the resources created by registration controller. The format is key1=value1,key2=value2.")
 	m.ImportOption.AddFlags(fs)
 }
 
@@ -98,7 +105,11 @@ func (m *HubManagerOptions) RunControllerManager(ctx context.Context, controller
 		return err
 	}
 
-	metadataClient, err := metadata.NewForConfig(controllerContext.KubeConfig)
+	// copy a separate config for gc controller and increase the gc controller's throughput.
+	metadataKubeConfig := rest.CopyConfig(controllerContext.KubeConfig)
+	metadataKubeConfig.QPS = controllerContext.KubeConfig.QPS * 2
+	metadataKubeConfig.Burst = controllerContext.KubeConfig.Burst * 2
+	metadataClient, err := metadata.NewForConfig(metadataKubeConfig)
 	if err != nil {
 		return err
 	}
@@ -181,7 +192,7 @@ func (m *HubManagerOptions) RunControllerManagerWithInformers(
 			}
 			drivers = append(drivers, csrDriver)
 		case commonhelpers.AwsIrsaAuthType:
-			awsIRSAHubDriver, err := awsirsa.NewAWSIRSAHubDriver(ctx, m.HubClusterArn, m.AutoApprovedARNPatterns, m.AwsResourceTags)
+			awsIRSAHubDriver, err := awsirsa.NewAWSIRSAHubDriver(ctx, m.HubClusterArn, m.AutoApprovedARNPatterns, m.AwsResourceTags, m.DisableManagedIam)
 			if err != nil {
 				return err
 			}
@@ -189,7 +200,14 @@ func (m *HubManagerOptions) RunControllerManagerWithInformers(
 		}
 	}
 	hubDriver := register.NewAggregatedHubDriver(drivers...)
-
+	labelsMap := make(map[string]string)
+	if m.Labels != "" {
+		var err error
+		labelsMap, err = generate.ParseLabels(m.Labels)
+		if err != nil {
+			return err
+		}
+	}
 	managedClusterController := managedcluster.NewManagedClusterController(
 		kubeClient,
 		clusterClient,
@@ -201,6 +219,7 @@ func (m *HubManagerOptions) RunControllerManagerWithInformers(
 		workInformers.Work().V1().ManifestWorks(),
 		hubDriver,
 		controllerContext.EventRecorder,
+		labelsMap,
 	)
 
 	taintController := taint.NewTaintController(
@@ -248,6 +267,7 @@ func (m *HubManagerOptions) RunControllerManagerWithInformers(
 		clusterInformers.Cluster().V1().ManagedClusters(),
 		kubeInformers.Rbac().V1().ClusterRoles(),
 		controllerContext.EventRecorder,
+		labelsMap,
 	)
 
 	addOnHealthCheckController := addon.NewManagedClusterAddOnHealthCheckController(

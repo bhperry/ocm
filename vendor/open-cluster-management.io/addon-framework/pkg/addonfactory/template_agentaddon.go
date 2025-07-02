@@ -2,7 +2,9 @@ package addonfactory
 
 import (
 	"fmt"
+	"strings"
 
+	certificatesv1 "k8s.io/api/certificates/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/klog/v2"
@@ -27,7 +29,13 @@ type templateBuiltinValues struct {
 // the default values can be overrided by getValuesFuncs
 type templateDefaultValues struct {
 	HubKubeConfigSecret     string
+	CustomCertSecrets       []string
 	ManagedKubeConfigSecret string
+	AwsIrsaRegistration     *templateHubAwsIrsaDriver
+}
+
+type templateHubAwsIrsaDriver struct {
+	IamConfigSecret string
 }
 
 type templateFile struct {
@@ -149,9 +157,27 @@ func (a *TemplateAgentAddon) getDefaultValues(
 	addon *addonapiv1alpha1.ManagedClusterAddOn) Values {
 	defaultValues := templateDefaultValues{}
 
-	// TODO: hubKubeConfigSecret depends on the signer configuration in registration, and the registration is an array.
-	if a.agentAddonOptions.Registration != nil {
-		defaultValues.HubKubeConfigSecret = fmt.Sprintf("%s-hub-kubeconfig", a.agentAddonOptions.AddonName)
+	for _, registration := range addon.Status.Registrations {
+		switch registration.Type {
+		case addonapiv1alpha1.RegistrationAuthTypeCsr:
+			if a.agentAddonOptions.Registration != nil {
+				switch registration.CSR.SignerName {
+				case certificatesv1.KubeAPIServerClientSignerName:
+					defaultValues.HubKubeConfigSecret = hubKubeConfigSecret(a.agentAddonOptions.AddonName)
+				default:
+					defaultValues.CustomCertSecrets = append(
+						defaultValues.CustomCertSecrets,
+						customCertSecret(a.agentAddonOptions.AddonName, registration.CSR.SignerName),
+					)
+				}
+			}
+		case addonapiv1alpha1.RegistrationAuthTypeAwsIrsa:
+			defaultValues.HubKubeConfigSecret = hubKubeConfigSecret(a.agentAddonOptions.AddonName)
+			defaultValues.AwsIrsaRegistration = &templateHubAwsIrsaDriver{}
+			if registration.AwsIrsa != nil {
+				defaultValues.AwsIrsaRegistration.IamConfigSecret = registration.AwsIrsa.IamConfigSecret
+			}
+		}
 	}
 
 	defaultValues.ManagedKubeConfigSecret = fmt.Sprintf("%s-managed-kubeconfig", addon.Name)
@@ -161,4 +187,12 @@ func (a *TemplateAgentAddon) getDefaultValues(
 
 func (a *TemplateAgentAddon) addTemplateData(file string, data []byte) {
 	a.templateFiles = append(a.templateFiles, templateFile{name: file, content: data})
+}
+
+func hubKubeConfigSecret(addonName string) string {
+	return fmt.Sprintf("%s-hub-kubeconfig", addonName)
+}
+
+func customCertSecret(addonName, signerName string) string {
+	return fmt.Sprintf("%s-%s-client-cert", addonName, strings.ReplaceAll(signerName, "/", "-"))
 }

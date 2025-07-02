@@ -22,6 +22,7 @@ import (
 	addonlisterv1alpha1 "open-cluster-management.io/api/client/addon/listers/addon/v1alpha1"
 	"open-cluster-management.io/sdk-go/pkg/patcher"
 
+	commonhelpers "open-cluster-management.io/ocm/pkg/common/helpers"
 	"open-cluster-management.io/ocm/pkg/common/queue"
 	"open-cluster-management.io/ocm/pkg/registration/register"
 )
@@ -194,16 +195,23 @@ func (c *addOnRegistrationController) startRegistration(ctx context.Context, con
 	secretOption := register.SecretOption{
 		SecretNamespace: config.InstallationNamespace,
 		SecretName:      config.secretName,
-		Subject:         config.x509Subject(c.clusterName, c.agentName),
-		Signer:          config.registration.SignerName,
 		ClusterName:     c.clusterName,
 	}
 
-	if config.registration.SignerName == certificatesv1.KubeAPIServerClientSignerName {
+	var controllerName string
+	switch config.registration.Type {
+	case commonhelpers.CSRAuthType:
+		secretOption.Signer = config.registration.CSR.SignerName
+		secretOption.Subject = config.x509Subject(c.clusterName, c.agentName)
+		if config.registration.CSR.SignerName == certificatesv1.KubeAPIServerClientSignerName {
+			secretOption.BootStrapKubeConfigFile = c.kubeconfigFile
+		}
+		controllerName = fmt.Sprintf("ClientCertController@addon:%s:signer:%s", config.addOnName, config.registration.CSR.SignerName)
+	case commonhelpers.AwsIrsaAuthType:
+		controllerName = fmt.Sprintf("ClientAwsIrsaController@addon:%s", config.addOnName)
 		secretOption.BootStrapKubeConfigFile = c.kubeconfigFile
 	}
 	driver := c.addonDriver.Fork(config.addOnName, secretOption)
-	controllerName := fmt.Sprintf("ClientCertController@addon:%s:signer:%s", config.addOnName, config.registration.SignerName)
 	statusUpdater := c.generateStatusUpdate(c.clusterName, config.addOnName)
 	secretController := register.NewSecretController(
 		secretOption, driver, statusUpdater,

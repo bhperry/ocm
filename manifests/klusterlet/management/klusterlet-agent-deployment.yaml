@@ -86,7 +86,9 @@ spec:
           {{if .ExternalServerURL}}
           - "--spoke-external-server-urls={{ .ExternalServerURL }}"
           {{end}}
-          {{if eq .Replica 1}}
+          {{if .WorkStatusSyncInterval}}
+          - "--status-sync-interval={{ .WorkStatusSyncInterval }}"
+          {{else if eq .Replica 1}}
           - "--status-sync-interval=60s"
           {{end}}
           {{if gt .ClientCertExpirationSeconds 0}}
@@ -104,6 +106,18 @@ spec:
           {{end}}
           {{if gt .AgentKubeAPIBurst 0}}
           - "--kube-api-burst={{ .AgentKubeAPIBurst }}"
+          {{end}}
+          {{if gt .WorkHubKubeAPIQPS 0.0}}
+          - "--hub-kube-api-qps={{ .WorkHubKubeAPIQPS }}"
+          {{end}}
+          {{if gt .WorkHubKubeAPIBurst 0}}
+          - "--hub-kube-api-burst={{ .WorkHubKubeAPIBurst }}"
+          {{end}}
+          {{if .MaxCustomClusterClaims}}
+          - "--max-custom-cluster-claims={{ .MaxCustomClusterClaims }}"
+          {{end}}
+          {{if .ReservedClusterClaimSuffixes}}
+          - "--reserved-cluster-claim-suffixes={{ .ReservedClusterClaimSuffixes }}"
           {{end}}
           {{if .AppliedManifestWorkEvictionGracePeriod}}
           - "--appliedmanifestwork-eviction-grace-period={{ .AppliedManifestWorkEvictionGracePeriod }}"
@@ -216,8 +230,14 @@ spec:
       - name: tmpdir
         emptyDir: { }
       {{if eq .RegistrationDriver.AuthType "awsirsa"}}
+      {{if and .RegistrationDriver.AwsIrsa .RegistrationDriver.AwsIrsa.IamConfigSecret }}
+      - name: dot-aws
+        secret:
+          secretName: {{ .RegistrationDriver.AwsIrsa.IamConfigSecret }}
+      {{else}}
       - name: dot-aws
         emptyDir: { }
+      {{end}}
       - name: awscli
         emptyDir: { }
       {{end}}

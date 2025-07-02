@@ -240,7 +240,10 @@ var _ = ginkgo.Describe("Addon Registration", func() {
 			addOn.Status = addonv1alpha1.ManagedClusterAddOnStatus{
 				Registrations: []addonv1alpha1.RegistrationConfig{
 					{
-						SignerName: signerName,
+						Type: "csr",
+						CSR: &addonv1alpha1.CsrRegistrationConfig{
+							SignerName: signerName,
+						},
 					},
 				},
 			}
@@ -340,7 +343,10 @@ var _ = ginkgo.Describe("Addon Registration", func() {
 			created.Status = addonv1alpha1.ManagedClusterAddOnStatus{
 				Registrations: []addonv1alpha1.RegistrationConfig{
 					{
-						SignerName: signerName,
+						Type: "csr",
+						CSR: &addonv1alpha1.CsrRegistrationConfig{
+							SignerName: signerName,
+						},
 					},
 				},
 			}
@@ -398,7 +404,10 @@ var _ = ginkgo.Describe("Addon Registration", func() {
 			addOn.Status = addonv1alpha1.ManagedClusterAddOnStatus{
 				Registrations: []addonv1alpha1.RegistrationConfig{
 					{
-						SignerName: newSignerName,
+						Type: "csr",
+						CSR: &addonv1alpha1.CsrRegistrationConfig{
+							SignerName: newSignerName,
+						},
 					},
 				},
 			}
@@ -442,9 +451,12 @@ var _ = ginkgo.Describe("Addon Registration", func() {
 				addOn.Status = addonv1alpha1.ManagedClusterAddOnStatus{
 					Registrations: []addonv1alpha1.RegistrationConfig{
 						{
-							SignerName: addOn.Status.Registrations[0].SignerName,
-							Subject: addonv1alpha1.Subject{
-								User: fmt.Sprintf("test-%d", i),
+							Type: "csr",
+							CSR: &addonv1alpha1.CsrRegistrationConfig{
+								SignerName: addOn.Status.Registrations[0].CSR.SignerName,
+								Subject: addonv1alpha1.Subject{
+									User: fmt.Sprintf("test-%d", i),
+								},
 							},
 						},
 					},

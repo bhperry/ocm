@@ -15,6 +15,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"open-cluster-management.io/addon-framework/pkg/addonfactory"
+	addonconstants "open-cluster-management.io/addon-framework/pkg/addonmanager/constants"
 	"open-cluster-management.io/addon-framework/pkg/agent"
 	"open-cluster-management.io/addon-framework/pkg/utils"
 	addonapiv1alpha1 "open-cluster-management.io/api/addon/v1alpha1"
@@ -132,9 +133,10 @@ func (a *CRDTemplateAgentAddon) GetAgentAddonOptions() agent.AgentAddonOptions {
 		HealthProber: &agent.HealthProber{
 			Type: agent.HealthProberTypeWorkloadAvailability,
 		},
+		HostedModeInfoFunc:  addonconstants.GetHostedModeInfo,
 		SupportedConfigGVRs: supportedConfigGVRs,
 		Registration: &agent.RegistrationOption{
-			CSRConfigurations:     a.TemplateCSRConfigurationsFunc(),
+			Configurations:        a.TemplateConfigurationsFunc(),
 			PermissionConfig:      a.TemplatePermissionConfigFunc(),
 			CSRApproveCheck:       a.TemplateCSRApproveCheckFunc(),
 			CSRSign:               a.TemplateCSRSignFunc(),
@@ -189,7 +191,7 @@ func (a *CRDTemplateAgentAddon) renderObjects(
 			return objects, err
 		}
 
-		object, err = a.decorateObject(template, object, presetValues, privateValues)
+		object, err = a.decorateObject(addon, template, object, presetValues, privateValues)
 		if err != nil {
 			return objects, err
 		}
@@ -206,13 +208,14 @@ func (a *CRDTemplateAgentAddon) renderObjects(
 }
 
 func (a *CRDTemplateAgentAddon) decorateObject(
+	addon *addonapiv1alpha1.ManagedClusterAddOn,
 	template *addonapiv1alpha1.AddOnTemplate,
 	obj *unstructured.Unstructured,
 	orderedValues orderedValues,
 	privateValues addonfactory.Values) (*unstructured.Unstructured, error) {
 	decorators := []decorator{
-		newDeploymentDecorator(a.logger, a.addonName, template, orderedValues, privateValues),
-		newDaemonSetDecorator(a.logger, a.addonName, template, orderedValues, privateValues),
+		newDeploymentDecorator(a.logger, addon, template, orderedValues, privateValues),
+		newDaemonSetDecorator(a.logger, addon, template, orderedValues, privateValues),
 		newNamespaceDecorator(privateValues),
 	}
 

@@ -115,6 +115,7 @@ func NewKlusterletController(
 type AwsIrsa struct {
 	HubClusterArn     string
 	ManagedClusterArn string
+	IamConfigSecret   string
 }
 
 type RegistrationDriver struct {
@@ -127,6 +128,9 @@ type ManagedClusterIamRole struct {
 }
 
 func (managedClusterIamRole *ManagedClusterIamRole) arn() string {
+	if managedClusterIamRole.AwsIrsa.ManagedClusterArn == "" {
+		return ""
+	}
 	managedClusterAccountId, managedClusterName := commonhelpers.GetAwsAccountIdAndClusterName(managedClusterIamRole.AwsIrsa.ManagedClusterArn)
 	hubClusterAccountId, hubClusterName := commonhelpers.GetAwsAccountIdAndClusterName(managedClusterIamRole.AwsIrsa.HubClusterArn)
 	md5HashUniqueIdentifier := commonhelpers.Md5HashSuffix(hubClusterAccountId, hubClusterName, managedClusterAccountId, managedClusterName)
@@ -171,6 +175,10 @@ type klusterletConfig struct {
 	RegistrationKubeAPIBurst                    int32
 	WorkKubeAPIQPS                              float32
 	WorkKubeAPIBurst                            int32
+	WorkHubKubeAPIQPS                           float32
+	WorkHubKubeAPIBurst                         int32
+	AppliedManifestWorkEvictionGracePeriod      string
+	WorkStatusSyncInterval                      string
 	AgentKubeAPIQPS                             float32
 	AgentKubeAPIBurst                           int32
 	ExternalManagedKubeConfigSecret             string
@@ -178,8 +186,9 @@ type klusterletConfig struct {
 	ExternalManagedKubeConfigWorkSecret         string
 	ExternalManagedKubeConfigAgentSecret        string
 	InstallMode                                 operatorapiv1.InstallMode
-	AppliedManifestWorkEvictionGracePeriod      string
 
+	MaxCustomClusterClaims       int
+	ReservedClusterClaimSuffixes string
 	// PriorityClassName is the name of the PriorityClass used by the deployed agents
 	PriorityClassName string
 
@@ -204,6 +213,9 @@ type klusterletConfig struct {
 	ManagedClusterArn        string
 	ManagedClusterRoleArn    string
 	ManagedClusterRoleSuffix string
+
+	// flag to enable about about-api
+	AboutAPIEnabled bool
 }
 
 // If multiplehubs feature gate is enabled, using the bootstrapkubeconfigs from klusterlet CR.
@@ -252,20 +264,19 @@ func (n *klusterletController) sync(ctx context.Context, controllerContext facto
 	}
 
 	config := klusterletConfig{
-		KlusterletName:                         klusterlet.Name,
-		KlusterletNamespace:                    helpers.KlusterletNamespace(klusterlet),
-		AgentNamespace:                         helpers.AgentNamespace(klusterlet),
-		AgentID:                                string(klusterlet.UID),
-		RegistrationImage:                      klusterlet.Spec.RegistrationImagePullSpec,
-		WorkImage:                              klusterlet.Spec.WorkImagePullSpec,
-		ClusterName:                            klusterlet.Spec.ClusterName,
-		SingletonImage:                         klusterlet.Spec.ImagePullSpec,
-		HubKubeConfigSecret:                    helpers.HubKubeConfig,
-		ExternalServerURL:                      getServersFromKlusterlet(klusterlet),
-		OperatorNamespace:                      n.operatorNamespace,
-		Replica:                                replica,
-		PriorityClassName:                      helpers.AgentPriorityClassName(klusterlet, n.kubeVersion),
-		AppliedManifestWorkEvictionGracePeriod: getAppliedManifestWorkEvictionGracePeriod(klusterlet),
+		KlusterletName:      klusterlet.Name,
+		KlusterletNamespace: helpers.KlusterletNamespace(klusterlet),
+		AgentNamespace:      helpers.AgentNamespace(klusterlet),
+		AgentID:             string(klusterlet.UID),
+		RegistrationImage:   klusterlet.Spec.RegistrationImagePullSpec,
+		WorkImage:           klusterlet.Spec.WorkImagePullSpec,
+		ClusterName:         klusterlet.Spec.ClusterName,
+		SingletonImage:      klusterlet.Spec.ImagePullSpec,
+		HubKubeConfigSecret: helpers.HubKubeConfig,
+		ExternalServerURL:   getServersFromKlusterlet(klusterlet),
+		OperatorNamespace:   n.operatorNamespace,
+		Replica:             replica,
+		PriorityClassName:   helpers.AgentPriorityClassName(klusterlet, n.kubeVersion),
 
 		ExternalManagedKubeConfigSecret:             helpers.ExternalManagedKubeConfig,
 		ExternalManagedKubeConfigRegistrationSecret: helpers.ExternalManagedKubeConfigRegistration,
@@ -283,9 +294,7 @@ func (n *klusterletController) sync(ctx context.Context, controllerContext facto
 
 	config.populateBootstrap(klusterlet)
 
-	if n.enableSyncLabels {
-		config.Labels = helpers.GetKlusterletAgentLabels(klusterlet)
-	}
+	config.Labels = helpers.GetKlusterletAgentLabels(klusterlet, n.enableSyncLabels)
 
 	managedClusterClients, err := n.managedClusterClientsBuilder.
 		withMode(config.InstallMode).
@@ -350,19 +359,27 @@ func (n *klusterletController) sync(ctx context.Context, controllerContext facto
 
 			hubClusterArn := klusterlet.Spec.RegistrationConfiguration.RegistrationDriver.AwsIrsa.HubClusterArn
 			managedClusterArn := klusterlet.Spec.RegistrationConfiguration.RegistrationDriver.AwsIrsa.ManagedClusterArn
+			iamConfigSecret := klusterlet.Spec.RegistrationConfiguration.RegistrationDriver.AwsIrsa.IamConfigSecret
 
 			config.RegistrationDriver = RegistrationDriver{
 				AuthType: klusterlet.Spec.RegistrationConfiguration.RegistrationDriver.AuthType,
 				AwsIrsa: &AwsIrsa{
 					HubClusterArn:     hubClusterArn,
 					ManagedClusterArn: managedClusterArn,
+					IamConfigSecret:   iamConfigSecret,
 				},
 			}
 			managedClusterIamRole := ManagedClusterIamRole{
 				AwsIrsa: config.RegistrationDriver.AwsIrsa,
 			}
 			config.ManagedClusterRoleArn = managedClusterIamRole.arn()
-			managedClusterAccountId, managedClusterName := commonhelpers.GetAwsAccountIdAndClusterName(managedClusterIamRole.AwsIrsa.ManagedClusterArn)
+			var managedClusterAccountId, managedClusterName string
+			if managedClusterIamRole.AwsIrsa.ManagedClusterArn != "" {
+				managedClusterAccountId, managedClusterName = commonhelpers.GetAwsAccountIdAndClusterName(managedClusterIamRole.AwsIrsa.ManagedClusterArn)
+			} else {
+				// Klusterlet running in non-AWS cluster, no account ID
+				managedClusterName = config.ClusterName
+			}
 			hubClusterAccountId, hubClusterName := commonhelpers.GetAwsAccountIdAndClusterName(managedClusterIamRole.AwsIrsa.HubClusterArn)
 			config.ManagedClusterRoleSuffix = commonhelpers.Md5HashSuffix(hubClusterAccountId, hubClusterName, managedClusterAccountId, managedClusterName)
 		} else {
@@ -370,6 +387,14 @@ func (n *klusterletController) sync(ctx context.Context, controllerContext facto
 				AuthType: klusterlet.Spec.RegistrationConfiguration.RegistrationDriver.AuthType,
 			}
 		}
+
+		// include clusterClaimConfig info if it exists
+		if klusterlet.Spec.RegistrationConfiguration.ClusterClaimConfiguration != nil {
+			config.MaxCustomClusterClaims = int(klusterlet.Spec.RegistrationConfiguration.ClusterClaimConfiguration.MaxCustomClusterClaims)
+			config.ReservedClusterClaimSuffixes = strings.Join(
+				klusterlet.Spec.RegistrationConfiguration.ClusterClaimConfiguration.ReservedClusterClaimSuffixes, ",")
+		}
+
 		// construct cluster annotations string, the final format is "key1=value1,key2=value2"
 		var annotationsArray []string
 		for k, v := range commonhelpers.FilterClusterAnnotations(klusterlet.Spec.RegistrationConfiguration.ClusterAnnotations) {
@@ -377,6 +402,9 @@ func (n *klusterletController) sync(ctx context.Context, controllerContext facto
 		}
 		config.ClusterAnnotationsString = strings.Join(annotationsArray, ",")
 	}
+
+	config.AboutAPIEnabled = helpers.FeatureGateEnabled(
+		registrationFeatureGates, ocmfeature.DefaultSpokeRegistrationFeatureGates, ocmfeature.ClusterProperty)
 	config.RegistrationFeatureGates, registrationFeatureMsgs = helpers.ConvertToFeatureGateFlags("Registration",
 		registrationFeatureGates, ocmfeature.DefaultSpokeRegistrationFeatureGates)
 
@@ -385,6 +413,14 @@ func (n *klusterletController) sync(ctx context.Context, controllerContext facto
 		workFeatureGates = klusterlet.Spec.WorkConfiguration.FeatureGates
 		config.WorkKubeAPIQPS = float32(klusterlet.Spec.WorkConfiguration.KubeAPIQPS)
 		config.WorkKubeAPIBurst = klusterlet.Spec.WorkConfiguration.KubeAPIBurst
+		config.WorkHubKubeAPIQPS = float32(klusterlet.Spec.WorkConfiguration.HubKubeAPIQPS)
+		config.WorkHubKubeAPIBurst = klusterlet.Spec.WorkConfiguration.HubKubeAPIBurst
+		if klusterlet.Spec.WorkConfiguration.AppliedManifestWorkEvictionGracePeriod != nil {
+			config.AppliedManifestWorkEvictionGracePeriod = klusterlet.Spec.WorkConfiguration.AppliedManifestWorkEvictionGracePeriod.Duration.String()
+		}
+		if klusterlet.Spec.WorkConfiguration.StatusSyncInterval != nil {
+			config.WorkStatusSyncInterval = klusterlet.Spec.WorkConfiguration.StatusSyncInterval.Duration.String()
+		}
 	}
 
 	config.WorkFeatureGates, workFeatureMsgs = helpers.ConvertToFeatureGateFlags("Work", workFeatureGates, ocmfeature.DefaultSpokeWorkFeatureGates)
@@ -472,22 +508,6 @@ func getServersFromKlusterlet(klusterlet *operatorapiv1.Klusterlet) string {
 		serverString = append(serverString, server.URL)
 	}
 	return strings.Join(serverString, ",")
-}
-
-func getAppliedManifestWorkEvictionGracePeriod(klusterlet *operatorapiv1.Klusterlet) string {
-	if klusterlet == nil {
-		return ""
-	}
-
-	if klusterlet.Spec.WorkConfiguration == nil {
-		return ""
-	}
-
-	if klusterlet.Spec.WorkConfiguration.AppliedManifestWorkEvictionGracePeriod == nil {
-		return ""
-	}
-
-	return klusterlet.Spec.WorkConfiguration.AppliedManifestWorkEvictionGracePeriod.Duration.String()
 }
 
 // getManagedKubeConfig is a helper func for Hosted mode, it will retrieve managed cluster

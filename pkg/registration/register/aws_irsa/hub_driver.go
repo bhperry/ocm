@@ -28,6 +28,7 @@ import (
 )
 
 const (
+	resourceNotFound        = "ResourceNotFoundException"
 	errNoSuchEntity         = "NoSuchEntity"
 	errEntityAlreadyExists  = "EntityAlreadyExists"
 	trustPolicyTemplatePath = "managed-cluster-policy/TrustPolicy.tmpl"
@@ -38,6 +39,7 @@ type AWSIRSAHubDriver struct {
 	cfg                     aws.Config
 	autoApprovedARNPatterns []*regexp.Regexp
 	awsResourceTags         []string
+	disableManagedIam       bool
 }
 
 func (a *AWSIRSAHubDriver) Accept(cluster *clusterv1.ManagedCluster) bool {
@@ -60,11 +62,15 @@ func (a *AWSIRSAHubDriver) Accept(cluster *clusterv1.ManagedCluster) bool {
 
 // Cleanup is run when the cluster is deleting or hubAcceptClient is set false
 func (c *AWSIRSAHubDriver) Cleanup(ctx context.Context, managedCluster *clusterv1.ManagedCluster) error {
+	logger := klog.FromContext(ctx)
+	if c.disableManagedIam {
+		logger.V(4).Info("No Op Cleanup since IAM management is disabled for awsirsa")
+		return nil
+	}
+
 	_, isManagedClusterIamRoleSuffixPresent :=
 		managedCluster.Annotations[operatorv1.ClusterAnnotationsKeyPrefix+"/"+ManagedClusterIAMRoleSuffix]
 	_, isManagedClusterArnPresent := managedCluster.Annotations[operatorv1.ClusterAnnotationsKeyPrefix+"/"+ManagedClusterArn]
-
-	logger := klog.FromContext(ctx)
 
 	if !isManagedClusterArnPresent && !isManagedClusterIamRoleSuffixPresent {
 		logger.V(4).Info("No Op Cleanup since managedcluster annotations are not present for awsirsa.")
@@ -77,14 +83,14 @@ func (c *AWSIRSAHubDriver) Cleanup(ctx context.Context, managedCluster *clusterv
 		return err
 	}
 
-	err = deleteIAMRole(ctx, c.cfg, roleName)
+	eksClient := eks.NewFromConfig(c.cfg)
+	_, hubClusterName := commonhelpers.GetAwsAccountIdAndClusterName(c.hubClusterArn)
+	err = deleteAccessEntry(ctx, eksClient, roleArn, hubClusterName)
 	if err != nil {
 		return err
 	}
 
-	eksClient := eks.NewFromConfig(c.cfg)
-	_, hubClusterName := commonhelpers.GetAwsAccountIdAndClusterName(c.hubClusterArn)
-	err = deleteAccessEntry(ctx, eksClient, roleArn, hubClusterName)
+	err = deleteIAMRole(ctx, c.cfg, roleName)
 	if err != nil {
 		return err
 	}
@@ -108,6 +114,11 @@ func (a *AWSIRSAHubDriver) CreatePermissions(ctx context.Context, cluster *clust
 		return nil
 	}
 	logger.V(4).Info("ManagedCluster is joined using aws-irsa registration-auth", "ManagedCluster", cluster.Name)
+
+	if a.disableManagedIam {
+		logger.V(4).Info("IAM management disabled, no roles or access entries created", "ManagedCluster", cluster.Name)
+		return nil
+	}
 
 	// Create an EKS client
 	eksClient := eks.NewFromConfig(a.cfg)
@@ -145,7 +156,6 @@ func createIAMRoleAndPolicy(ctx context.Context, hubClusterArn string, managedCl
 	managedClusterArn, isManagedClusterArnPresent := managedCluster.Annotations[operatorv1.ClusterAnnotationsKeyPrefix+"/"+ManagedClusterArn]
 
 	hubAccountId, hubClusterName = commonhelpers.GetAwsAccountIdAndClusterName(hubClusterArn)
-	managedClusterAccountId, managedClusterName = commonhelpers.GetAwsAccountIdAndClusterName(managedClusterArn)
 
 	roleName, roleArn, err := getRoleNameAndArn(ctx, managedCluster, cfg)
 	if err != nil {
@@ -154,6 +164,7 @@ func createIAMRoleAndPolicy(ctx context.Context, hubClusterArn string, managedCl
 	}
 
 	if hubClusterArn != "" && isManagedClusterIamRoleSuffixPresent && isManagedClusterArnPresent {
+		managedClusterAccountId, managedClusterName = commonhelpers.GetAwsAccountIdAndClusterName(managedClusterArn)
 
 		// Check if hash is the same
 		hash := commonhelpers.Md5HashSuffix(hubAccountId, hubClusterName, managedClusterAccountId, managedClusterName)
@@ -313,6 +324,10 @@ func deleteAccessEntry(ctx context.Context, eksClient *eks.Client, roleArn strin
 
 	_, err := eksClient.DeleteAccessEntry(ctx, params)
 	if err != nil {
+		if strings.Contains(err.Error(), resourceNotFound) {
+			logger.V(4).Error(err, "Access Entry already deleted for HubClusterName", "HubClusterName", hubClusterName)
+			return nil
+		}
 		logger.V(4).Error(err, "Failed to delete Access Entry for HubClusterName", "HubClusterName", hubClusterName)
 		return err
 	} else {
@@ -355,7 +370,7 @@ func parseTagsForRolesAndPolicies(tags []string) ([]iamtypes.Tag, error) {
 }
 
 func NewAWSIRSAHubDriver(ctx context.Context, hubClusterArn string, autoApprovedIdentityPatterns []string,
-	awsResourceTags []string) (register.HubDriver, error) {
+	awsResourceTags []string, disableManagedIam bool) (register.HubDriver, error) {
 	logger := klog.FromContext(ctx)
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
@@ -377,6 +392,7 @@ func NewAWSIRSAHubDriver(ctx context.Context, hubClusterArn string, autoApproved
 		cfg:                     cfg,
 		autoApprovedARNPatterns: compiledPatterns,
 		awsResourceTags:         awsResourceTags,
+		disableManagedIam:       disableManagedIam,
 	}
 
 	return awsIRSADriverForHub, nil

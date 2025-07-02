@@ -2,9 +2,11 @@ package helpers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/ghodss/yaml"
@@ -23,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -52,8 +55,12 @@ const (
 	// DefaultAddonNamespace is the default namespace for agent addon
 	DefaultAddonNamespace = "open-cluster-management-agent-addon"
 
+	// HubLabelKey is used to filter resources in informers
+	HubLabelKey = "createdByClusterManager"
+
 	// AgentLabelKey is used to filter resources in informers
-	AgentLabelKey = "createdByKlusterlet"
+	AgentLabelKey          = "createdByKlusterlet"
+	ClusterManagerLabelKey = "createdByClusterManager"
 )
 
 const (
@@ -819,16 +826,32 @@ func GetOperatorNamespace() string {
 	return operatorNamespace
 }
 
-func GetKlusterletAgentLabels(klusterlet *operatorapiv1.Klusterlet) map[string]string {
-	labels := klusterlet.GetLabels()
-	if labels == nil {
-		labels = map[string]string{}
+func GetKlusterletAgentLabels(klusterlet *operatorapiv1.Klusterlet, enableSyncLabels bool) map[string]string {
+	labels := map[string]string{}
+	if enableSyncLabels {
+		for k, v := range klusterlet.GetLabels() {
+			labels[k] = v
+		}
 	}
 
 	// This label key is used to filter resources in deployment informer
 	labels[AgentLabelKey] = klusterlet.GetName()
 
 	return labels
+}
+
+func ConvertLabelsMapToString(labels map[string]string) string {
+	var labelList []string
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		labelList = append(labelList, fmt.Sprintf("%s=%s", key, labels[key]))
+	}
+	return strings.Join(labelList, ",")
 }
 
 func MapCompare(required, existing map[string]string) bool {
@@ -838,4 +861,39 @@ func MapCompare(required, existing map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func AddLabelsToYaml(objData []byte, cmLabels map[string]string) ([]byte, error) {
+	jsonData, err := yaml.YAMLToJSON(objData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert YAML to JSON: %w", err)
+	}
+	u := &unstructured.Unstructured{}
+	if err := json.Unmarshal(jsonData, u); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
+	}
+
+	// Add or update labels
+	labels := u.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	for k, v := range cmLabels {
+		labels[k] = v
+	}
+	u.SetLabels(labels)
+
+	// Marshal back to JSON
+	modifiedJSON, err := json.Marshal(u)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal updated object: %w", err)
+	}
+
+	// Convert back to YAML (optional, if needed downstream)
+	modifiedYAML, err := yaml.JSONToYAML(modifiedJSON)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert JSON to YAML: %w", err)
+	}
+
+	return modifiedYAML, nil
 }

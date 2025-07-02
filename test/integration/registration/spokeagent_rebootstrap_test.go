@@ -277,11 +277,14 @@ var _ = ginkgo.Describe("Rebootstrap", func() {
 		created.Status = addonv1alpha1.ManagedClusterAddOnStatus{
 			Registrations: []addonv1alpha1.RegistrationConfig{
 				{
-					SignerName: signerName,
-					Subject: addonv1alpha1.Subject{
-						User: addOnName,
-						Groups: []string{
-							addOnName,
+					Type: "csr",
+					CSR: &addonv1alpha1.CsrRegistrationConfig{
+						SignerName: signerName,
+						Subject: addonv1alpha1.Subject{
+							User: addOnName,
+							Groups: []string{
+								addOnName,
+							},
 						},
 					},
 				},
@@ -544,7 +547,7 @@ var _ = ginkgo.Describe("Rebootstrap", func() {
 			}, eventuallyTimeout, eventuallyInterval).Should(gomega.BeTrue())
 
 			ginkgo.By("start the hub again")
-			startHub()
+			startHub(hubOption)
 
 			assertSuccessClusterBootstrap(testNamespace, managedClusterName, hubKubeconfigSecret, kubeClient, kubeClient, clusterClient, authn, time.Hour*24)
 		})

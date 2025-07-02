@@ -41,8 +41,10 @@ import (
 const (
 	clusterManagerFinalizer = "operator.open-cluster-management.io/cluster-manager-cleanup"
 
-	defaultWebhookPort       = int32(9443)
-	clusterManagerReSyncTime = 5 * time.Second
+	defaultWebhookPort         = int32(9443)
+	defaultHealthProbeBindAddr = ":8000"
+	defaultMetricsBindAddr     = ":8080"
+	clusterManagerReSyncTime   = 5 * time.Second
 )
 
 type clusterManagerController struct {
@@ -63,6 +65,7 @@ type clusterManagerController struct {
 	controlPlaneNodeLabelSelector string
 	deploymentReplicas            int32
 	operatorNamespace             string
+	enableSyncLabels              bool
 }
 
 type clusterManagerReconcile interface {
@@ -90,6 +93,7 @@ func NewClusterManagerController(
 	controlPlaneNodeLabelSelector string,
 	deploymentReplicas int32,
 	operatorNamespace string,
+	enableSyncLabels bool,
 ) factory.Controller {
 	controller := &clusterManagerController{
 		operatorKubeClient: operatorKubeClient,
@@ -107,6 +111,7 @@ func NewClusterManagerController(
 		controlPlaneNodeLabelSelector: controlPlaneNodeLabelSelector,
 		deploymentReplicas:            deploymentReplicas,
 		operatorNamespace:             operatorNamespace,
+		enableSyncLabels:              enableSyncLabels,
 	}
 
 	return factory.New().WithSync(controller.sync).
@@ -154,22 +159,19 @@ func (n *clusterManagerController) sync(ctx context.Context, controllerContext f
 	}
 
 	// This config is used to render template of manifests.
+	registrationWebhook, workWebhook := webhookConfigurations(clusterManager.Spec.DeployOption)
 	config := manifests.HubConfig{
-		ClusterManagerName:      clusterManager.Name,
-		ClusterManagerNamespace: clusterManagerNamespace,
-		OperatorNamespace:       n.operatorNamespace,
-		RegistrationImage:       clusterManager.Spec.RegistrationImagePullSpec,
-		WorkImage:               clusterManager.Spec.WorkImagePullSpec,
-		PlacementImage:          clusterManager.Spec.PlacementImagePullSpec,
-		AddOnManagerImage:       clusterManager.Spec.AddOnManagerImagePullSpec,
-		Replica:                 replica,
-		HostedMode:              clusterManager.Spec.DeployOption.Mode == operatorapiv1.InstallModeHosted,
-		RegistrationWebhook: manifests.Webhook{
-			Port: defaultWebhookPort,
-		},
-		WorkWebhook: manifests.Webhook{
-			Port: defaultWebhookPort,
-		},
+		ClusterManagerName:              clusterManager.Name,
+		ClusterManagerNamespace:         clusterManagerNamespace,
+		OperatorNamespace:               n.operatorNamespace,
+		RegistrationImage:               clusterManager.Spec.RegistrationImagePullSpec,
+		WorkImage:                       clusterManager.Spec.WorkImagePullSpec,
+		PlacementImage:                  clusterManager.Spec.PlacementImagePullSpec,
+		AddOnManagerImage:               clusterManager.Spec.AddOnManagerImagePullSpec,
+		Replica:                         replica,
+		HostedMode:                      clusterManager.Spec.DeployOption.Mode == operatorapiv1.InstallModeHosted,
+		RegistrationWebhook:             registrationWebhook,
+		WorkWebhook:                     workWebhook,
 		ResourceRequirementResourceType: helpers.ResourceType(clusterManager),
 		ResourceRequirements:            resourceRequirements,
 		WorkDriver:                      string(workDriver),
@@ -214,12 +216,9 @@ func (n *clusterManagerController) sync(ctx context.Context, controllerContext f
 	// Compute and populate the value of managed cluster identity creator role to be used in cluster manager registration service account
 	config.ManagedClusterIdentityCreatorRole = getIdentityCreatorRoleAndTags(*clusterManager)
 
-	// If we are deploying in the hosted mode, it requires us to create webhook in a different way with the default mode.
-	// In the hosted mode, the webhook servers is running in the management cluster but the users are accessing the hub cluster.
-	// So we need to add configuration to make the apiserver of the hub cluster could access the webhook servers on the management cluster.
-	if clusterManager.Spec.DeployOption.Hosted != nil {
-		config.RegistrationWebhook = convertWebhookConfiguration(clusterManager.Spec.DeployOption.Hosted.RegistrationWebhookConfiguration)
-		config.WorkWebhook = convertWebhookConfiguration(clusterManager.Spec.DeployOption.Hosted.WorkWebhookConfiguration)
+	if n.enableSyncLabels {
+		config.LabelsString = helpers.ConvertLabelsMapToString(clusterManager.Labels)
+		config.Labels = clusterManager.Labels
 	}
 
 	// Update finalizer at first
@@ -379,11 +378,51 @@ func isIPFormat(address string) bool {
 	return true
 }
 
-func convertWebhookConfiguration(webhookConfiguration operatorapiv1.WebhookConfiguration) manifests.Webhook {
+func webhookConfigurations(deployOption operatorapiv1.ClusterManagerDeployOption) (registration, work manifests.Webhook) {
+	switch deployOption.Mode {
+	case operatorapiv1.InstallModeDefault:
+		if deployOption.Default == nil {
+			registration.Port = defaultWebhookPort
+			registration.HealthProbeBindAddress = defaultHealthProbeBindAddr
+			registration.MetricsBindAddress = defaultMetricsBindAddr
+			work.Port = defaultWebhookPort
+			work.HealthProbeBindAddress = defaultHealthProbeBindAddr
+			work.MetricsBindAddress = defaultMetricsBindAddr
+		} else {
+			registration = convertDefaultWebhookConfiguration(deployOption.Default.RegistrationWebhookConfiguration)
+			work = convertDefaultWebhookConfiguration(deployOption.Default.WorkWebhookConfiguration)
+		}
+	case operatorapiv1.InstallModeHosted:
+		if deployOption.Hosted == nil {
+			registration.Port = defaultWebhookPort
+			work.Port = defaultWebhookPort
+		} else {
+			registration = convertHostedWebhookConfiguration(deployOption.Hosted.RegistrationWebhookConfiguration)
+			work = convertHostedWebhookConfiguration(deployOption.Hosted.WorkWebhookConfiguration)
+		}
+	}
+	return registration, work
+}
+
+func convertHostedWebhookConfiguration(webhookConfiguration operatorapiv1.WebhookConfiguration) manifests.Webhook {
+	// If we are deploying in the hosted mode, it requires us to create webhook in a different way with the default mode.
+	// In the hosted mode, the webhook servers is running in the management cluster but the users are accessing the hub cluster.
+	// So we need to add configuration to make the apiserver of the hub cluster could access the webhook servers on the management cluster.
 	return manifests.Webhook{
 		Address:    webhookConfiguration.Address,
 		Port:       webhookConfiguration.Port,
 		IsIPFormat: isIPFormat(webhookConfiguration.Address),
+	}
+}
+
+func convertDefaultWebhookConfiguration(webhookConfiguration operatorapiv1.WebhookDefaultConfiguration) manifests.Webhook {
+	// In default mode, webhooks run inside the hub cluster.
+	// These configurations allow the webhooks to configured for different kubernetes environements.
+	return manifests.Webhook{
+		Port:                   webhookConfiguration.Port,
+		HealthProbeBindAddress: webhookConfiguration.HealthProbeBindAddress,
+		MetricsBindAddress:     webhookConfiguration.MetricsBindAddress,
+		HostNetwork:            webhookConfiguration.HostNetwork,
 	}
 }
 
@@ -428,6 +467,9 @@ func getIdentityCreatorRoleAndTags(cm operatorapiv1.ClusterManager) string {
 	if cm.Spec.RegistrationConfiguration != nil {
 		for _, registrationDriver := range cm.Spec.RegistrationConfiguration.RegistrationDrivers {
 			if registrationDriver.AuthType == commonhelper.AwsIrsaAuthType && registrationDriver.AwsIrsa != nil {
+				if registrationDriver.AwsIrsa.DisableManagedIam {
+					return ""
+				}
 				hubClusterArn := registrationDriver.AwsIrsa.HubClusterArn
 				hubClusterAccountId, hubClusterName := commonhelper.GetAwsAccountIdAndClusterName(hubClusterArn)
 				return "arn:aws:iam::" + hubClusterAccountId + ":role/" + hubClusterName + "_managed-cluster-identity-creator"

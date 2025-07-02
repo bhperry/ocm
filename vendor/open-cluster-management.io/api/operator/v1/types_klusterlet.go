@@ -151,13 +151,13 @@ type RegistrationConfiguration struct {
 	// +optional
 	ClusterAnnotations map[string]string `json:"clusterAnnotations,omitempty"`
 
-	// KubeAPIQPS indicates the maximum QPS while talking with apiserver of hub cluster from the spoke cluster.
+	// KubeAPIQPS indicates the maximum QPS while talking with apiserver on the spoke cluster.
 	// If it is set empty, use the default value: 50
 	// +optional
 	// +kubebuilder:default:=50
 	KubeAPIQPS int32 `json:"kubeAPIQPS,omitempty"`
 
-	// KubeAPIBurst indicates the maximum burst of the throttle while talking with apiserver of hub cluster from the spoke cluster.
+	// KubeAPIBurst indicates the maximum burst of the throttle while talking with apiserver on the spoke cluster.
 	// If it is set empty, use the default value: 100
 	// +optional
 	// +kubebuilder:default:=100
@@ -193,6 +193,9 @@ type ClusterClaimConfiguration struct {
 
 	// Custom suffixes for reserved ClusterClaims.
 	// +optional
+	// +kubebuilder:validation:MaxItems=10
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=64
 	ReservedClusterClaimSuffixes []string `json:"reservedClusterClaimSuffixes,omitempty"`
 }
 
@@ -215,13 +218,17 @@ type AwsIrsa struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern=`^arn:aws:eks:([a-zA-Z0-9-]+):(\d{12}):cluster/([a-zA-Z0-9-]+)$`
 	HubClusterArn string `json:"hubClusterArn"`
-	// The arn of the managed cluster (ie: an EKS cluster). This will be required to generate the md5hash which will be used as a suffix to create IAM role on hub
+	// The arn of the managed cluster (ie: an EKS cluster). This will be used when managed IAM is enabled to generate the md5hash as a suffix to create IAM role on hub
 	// as well as used by kluslerlet-agent, to assume role suffixed with the md5hash, on startup.
 	// Example - arn:eks:us-west-2:12345678910:cluster/managed-cluster1.
-	// +required
-	// +kubebuilder:validation:MinLength=1
+	// +optional
 	// +kubebuilder:validation:Pattern=`^arn:aws:eks:([a-zA-Z0-9-]+):(\d{12}):cluster/([a-zA-Z0-9-]+)$`
 	ManagedClusterArn string `json:"managedClusterArn"`
+
+	// IamConfigSecret is the name of a secret containing "config" and/or "credentials" files mounted to /.aws/config and /.aws/credentials respectively.
+	// More Info: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
+	// +optional
+	IamConfigSecret string `json:"iamConfigSecret,omitempty"`
 }
 
 type TypeBootstrapKubeConfigs string
@@ -277,17 +284,29 @@ type WorkAgentConfiguration struct {
 	// +optional
 	FeatureGates []FeatureGate `json:"featureGates,omitempty"`
 
-	// KubeAPIQPS indicates the maximum QPS while talking with apiserver of hub cluster from the spoke cluster.
+	// KubeAPIQPS indicates the maximum QPS while talking with apiserver on the spoke cluster.
 	// If it is set empty, use the default value: 50
 	// +optional
 	// +kubebuilder:default:=50
 	KubeAPIQPS int32 `json:"kubeAPIQPS,omitempty"`
 
-	// KubeAPIBurst indicates the maximum burst of the throttle while talking with apiserver of hub cluster from the spoke cluster.
+	// KubeAPIBurst indicates the maximum burst of the throttle while talking with apiserver on the spoke cluster.
 	// If it is set empty, use the default value: 100
 	// +optional
 	// +kubebuilder:default:=100
 	KubeAPIBurst int32 `json:"kubeAPIBurst,omitempty"`
+
+	// HubKubeAPIQPS indicates the maximum QPS while talking with apiserver on the hub cluster.
+	// If it is set empty, use the default value: 50
+	// +optional
+	// +kubebuilder:default:=50
+	HubKubeAPIQPS int32 `json:"hubKubeAPIQPS,omitempty"`
+
+	// HubKubeAPIBurst indicates the maximum burst of the throttle while talking with apiserver on the hub cluster.
+	// If it is set empty, use the default value: 100
+	// +optional
+	// +kubebuilder:default:=100
+	HubKubeAPIBurst int32 `json:"hubKubeAPIBurst,omitempty"`
 
 	// AppliedManifestWorkEvictionGracePeriod is the eviction grace period the work agent will wait before
 	// evicting the AppliedManifestWorks, whose corresponding ManifestWorks are missing on the hub cluster, from
@@ -296,6 +315,14 @@ type WorkAgentConfiguration struct {
 	// +kubebuilder:validation:Type=string
 	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
 	AppliedManifestWorkEvictionGracePeriod *metav1.Duration `json:"appliedManifestWorkEvictionGracePeriod,omitempty"`
+
+	// StatusSyncInterval is the interval for the work agent to check the status of ManifestWorks.
+	// Larger value means less frequent status sync and less api calls to the managed cluster, vice versa.
+	// The value(x) should be: 5s <= x <= 1h.
+	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
+	StatusSyncInterval *metav1.Duration `json:"statusSyncInterval,omitempty"`
 }
 
 const (

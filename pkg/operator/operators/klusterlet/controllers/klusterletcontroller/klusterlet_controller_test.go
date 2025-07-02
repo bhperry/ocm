@@ -37,6 +37,7 @@ import (
 	fakeoperatorclient "open-cluster-management.io/api/client/operator/clientset/versioned/fake"
 	operatorinformers "open-cluster-management.io/api/client/operator/informers/externalversions"
 	fakeworkclient "open-cluster-management.io/api/client/work/clientset/versioned/fake"
+	ocmfeature "open-cluster-management.io/api/feature"
 	operatorapiv1 "open-cluster-management.io/api/operator/v1"
 	workapiv1 "open-cluster-management.io/api/work/v1"
 	"open-cluster-management.io/sdk-go/pkg/patcher"
@@ -123,8 +124,10 @@ func newKlusterlet(name, namespace, clustername string) *operatorapiv1.Klusterle
 				KubeAPIBurst: 60,
 			},
 			WorkConfiguration: &operatorapiv1.WorkAgentConfiguration{
-				KubeAPIQPS:   20,
-				KubeAPIBurst: 50,
+				KubeAPIQPS:      20,
+				KubeAPIBurst:    50,
+				HubKubeAPIQPS:   40,
+				HubKubeAPIBurst: 80,
 			},
 			HubApiServerHostAlias: &operatorapiv1.HubApiServerHostAlias{
 				IP:       "11.22.33.44",
@@ -377,7 +380,8 @@ func getDeployments(actions []clienttesting.Action, verb, suffix string) *appsv1
 	return nil
 }
 
-func assertKlusterletDeployment(t *testing.T, actions []clienttesting.Action, verb, serverURL, clusterName string) {
+func assertKlusterletDeployment(t *testing.T, registrationAuthType string, actions []clienttesting.Action, verb, serverURL, clusterName string,
+	claimConfig *operatorapiv1.ClusterClaimConfiguration) {
 	deployment := getDeployments(actions, verb, "agent")
 	if deployment == nil {
 		t.Errorf("klusterlet deployment not found")
@@ -399,24 +403,39 @@ func assertKlusterletDeployment(t *testing.T, actions []clienttesting.Action, ve
 		"--bootstrap-kubeconfig=/spoke/bootstrap/kubeconfig",
 	}
 
+	expectedArgs = append(expectedArgs, "--agent-id=", "--workload-source-driver=kube", "--workload-source-config=/spoke/hub-kubeconfig/kubeconfig",
+		"--status-sync-interval=60s", "--kube-api-qps=20", "--kube-api-burst=60", "--hub-kube-api-qps=40", "--hub-kube-api-burst=80")
+
 	if serverURL != "" {
 		expectedArgs = append(expectedArgs, fmt.Sprintf("--spoke-external-server-urls=%s", serverURL))
 	}
 
-	expectedArgs = append(expectedArgs, "--agent-id=", "--workload-source-driver=kube", "--workload-source-config=/spoke/hub-kubeconfig/kubeconfig",
-		"--status-sync-interval=60s", "--kube-api-qps=20", "--kube-api-burst=60",
-		"--registration-auth=awsirsa",
-		"--hub-cluster-arn=arn:aws:eks:us-west-2:123456789012:cluster/hub-cluster1",
-		"--managed-cluster-arn=arn:aws:eks:us-west-2:123456789012:cluster/managed-cluster1",
-		"--managed-cluster-role-suffix=7f8141296c75f2871e3d030f85c35692")
+	if claimConfig != nil {
+		if claimConfig.MaxCustomClusterClaims > 0 {
+			expectedArgs = append(expectedArgs, fmt.Sprintf("--max-custom-cluster-claims=%d", claimConfig.MaxCustomClusterClaims))
+		}
+		if len(claimConfig.ReservedClusterClaimSuffixes) > 0 {
+			expectedArgs = append(expectedArgs, fmt.Sprintf("--reserved-cluster-claim-suffixes=%s",
+				strings.Join(claimConfig.ReservedClusterClaimSuffixes, ",")))
+		}
+	}
+	if registrationAuthType == "awsirsa" {
+		expectedArgs = append(expectedArgs,
+			"--registration-auth=awsirsa",
+			"--hub-cluster-arn=arn:aws:eks:us-west-2:123456789012:cluster/hub-cluster1",
+			"--managed-cluster-arn=arn:aws:eks:us-west-2:123456789012:cluster/managed-cluster1",
+			"--managed-cluster-role-suffix=7f8141296c75f2871e3d030f85c35692")
+	}
 
 	if !equality.Semantic.DeepEqual(args, expectedArgs) {
 		t.Errorf("Expect args %v, but got %v", expectedArgs, args)
 		return
 	}
 
-	assert.True(t, isDotAwsMounted(volumeMounts))
-	assert.True(t, isDotAwsVolumePresent(volumes))
+	if registrationAuthType == "awsirsa" {
+		assert.True(t, isDotAwsMounted(volumeMounts))
+		assert.True(t, isDotAwsVolumePresent(volumes))
+	}
 
 }
 
@@ -479,7 +498,9 @@ func assertRegistrationDeployment(t *testing.T, actions []clienttesting.Action, 
 	}
 }
 
-func assertWorkDeployment(t *testing.T, actions []clienttesting.Action, verb, clusterName string, mode operatorapiv1.InstallMode, replica int32) {
+func assertWorkDeployment(t *testing.T, actions []clienttesting.Action, verb, clusterName string,
+	mode operatorapiv1.InstallMode, replica int32,
+	workStatusSyncInterval, appliedManifestWorkEvictionGracePeriod string) {
 	deployment := getDeployments(actions, verb, "work-agent")
 	if deployment == nil {
 		t.Errorf("work deployment not found")
@@ -506,11 +527,14 @@ func assertWorkDeployment(t *testing.T, actions []clienttesting.Action, verb, cl
 	}
 	expectArgs = append(expectArgs, "--terminate-on-files=/spoke/hub-kubeconfig/kubeconfig")
 
-	if *deployment.Spec.Replicas == 1 {
-		expectArgs = append(expectArgs, "--status-sync-interval=60s")
+	if workStatusSyncInterval != "" {
+		expectArgs = append(expectArgs, fmt.Sprintf("--status-sync-interval=%s", workStatusSyncInterval))
 	}
 
-	expectArgs = append(expectArgs, "--kube-api-qps=20", "--kube-api-burst=50")
+	expectArgs = append(expectArgs, "--kube-api-qps=20", "--kube-api-burst=50", "--hub-kube-api-qps=40", "--hub-kube-api-burst=80")
+	if appliedManifestWorkEvictionGracePeriod != "" {
+		expectArgs = append(expectArgs, fmt.Sprintf("--appliedmanifestwork-eviction-grace-period=%s", appliedManifestWorkEvictionGracePeriod))
+	}
 
 	if !equality.Semantic.DeepEqual(args, expectArgs) {
 		t.Errorf("Expect args %v, but got %v", expectArgs, args)
@@ -529,7 +553,7 @@ func ensureObject(t *testing.T, object runtime.Object, klusterlet *operatorapiv1
 		return
 	}
 
-	if enableSyncLabels && !helpers.MapCompare(helpers.GetKlusterletAgentLabels(klusterlet), access.GetLabels()) {
+	if enableSyncLabels && !helpers.MapCompare(helpers.GetKlusterletAgentLabels(klusterlet, enableSyncLabels), access.GetLabels()) {
 		t.Errorf("the labels of klusterlet are not synced to %v", access.GetName())
 		return
 	}
@@ -1070,7 +1094,7 @@ func TestAWSIrsaAuthInSingletonMode(t *testing.T) {
 		t.Errorf("Expected non error when sync, %v", err)
 	}
 
-	assertKlusterletDeployment(t, controller.kubeClient.Actions(), createVerb, "", "cluster1")
+	assertKlusterletDeployment(t, commonhelpers.AwsIrsaAuthType, controller.kubeClient.Actions(), createVerb, "", "cluster1", nil)
 }
 
 func TestAWSIrsaAuthInNonSingletonMode(t *testing.T) {
@@ -1126,7 +1150,8 @@ func TestReplica(t *testing.T) {
 
 	// should have 1 replica for registration deployment and 0 for work
 	assertRegistrationDeployment(t, controller.kubeClient.Actions(), createVerb, "", "cluster1", 1, false)
-	assertWorkDeployment(t, controller.kubeClient.Actions(), createVerb, "cluster1", operatorapiv1.InstallModeDefault, 0)
+	assertWorkDeployment(t, controller.kubeClient.Actions(), createVerb, "cluster1", operatorapiv1.InstallModeDefault,
+		0, "", "")
 
 	klusterlet = newKlusterlet("klusterlet", "testns", "cluster1")
 	klusterlet.Status.Conditions = []metav1.Condition{
@@ -1149,7 +1174,8 @@ func TestReplica(t *testing.T) {
 	}
 
 	// should have 1 replica for work
-	assertWorkDeployment(t, controller.kubeClient.Actions(), "update", "cluster1", operatorapiv1.InstallModeDefault, 1)
+	assertWorkDeployment(t, controller.kubeClient.Actions(), "update", "cluster1", operatorapiv1.InstallModeDefault,
+		1, "60s", "")
 
 	controller.kubeClient.PrependReactor("list", "nodes", func(action clienttesting.Action) (handled bool, ret runtime.Object, err error) {
 		if action.GetVerb() != "list" {
@@ -1171,7 +1197,51 @@ func TestReplica(t *testing.T) {
 
 	// should have 3 replicas for clusters with multiple nodes
 	assertRegistrationDeployment(t, controller.kubeClient.Actions(), "update", "", "cluster1", 3, false)
-	assertWorkDeployment(t, controller.kubeClient.Actions(), "update", "cluster1", operatorapiv1.InstallModeDefault, 3)
+	assertWorkDeployment(t, controller.kubeClient.Actions(), "update", "cluster1", operatorapiv1.InstallModeDefault,
+		3, "", "")
+}
+
+func TestWorkConfig(t *testing.T) {
+	klusterlet := newKlusterlet("klusterlet", "testns", "cluster1")
+	workSyncInterval := metav1.Duration{Duration: 20 * time.Second}
+	appliedManifestWorkEvictionGracePeriod := metav1.Duration{Duration: 30 * time.Minute}
+	if klusterlet.Spec.WorkConfiguration == nil {
+		klusterlet.Spec.WorkConfiguration = &operatorapiv1.WorkAgentConfiguration{
+			StatusSyncInterval:                     &workSyncInterval,
+			AppliedManifestWorkEvictionGracePeriod: &appliedManifestWorkEvictionGracePeriod,
+		}
+	} else {
+		klusterlet.Spec.WorkConfiguration.StatusSyncInterval = &workSyncInterval
+		klusterlet.Spec.WorkConfiguration.AppliedManifestWorkEvictionGracePeriod = &appliedManifestWorkEvictionGracePeriod
+	}
+	klusterlet.Status.Conditions = []metav1.Condition{
+		{
+			Type:   operatorapiv1.ConditionHubConnectionDegraded,
+			Status: metav1.ConditionFalse,
+		},
+	}
+	hubSecret := newSecret(helpers.HubKubeConfig, "testns")
+	hubSecret.Data["kubeconfig"] = []byte("dummuykubeconnfig")
+	hubSecret.Data["cluster-name"] = []byte("cluster1")
+	objects := []runtime.Object{
+		newNamespace("testns"),
+		newSecret(helpers.BootstrapHubKubeConfig, "testns"),
+		hubSecret,
+	}
+
+	syncContext := testingcommon.NewFakeSyncContext(t, "klusterlet")
+	controller := newTestController(t, klusterlet, syncContext.Recorder(), nil, false,
+		objects...)
+
+	err := controller.controller.sync(context.TODO(), syncContext)
+	if err != nil {
+		t.Errorf("Expected non error when sync, %v", err)
+	}
+
+	assertRegistrationDeployment(t, controller.kubeClient.Actions(), createVerb, "", "cluster1", 1, false)
+	assertWorkDeployment(t, controller.kubeClient.Actions(), createVerb, "cluster1", operatorapiv1.InstallModeDefault,
+		1, "20s", "30m0s")
+
 }
 
 func TestClusterNameChange(t *testing.T) {
@@ -1243,7 +1313,7 @@ func TestClusterNameChange(t *testing.T) {
 	if err != nil {
 		t.Errorf("Expected non error when sync, %v", err)
 	}
-	assertWorkDeployment(t, controller.kubeClient.Actions(), "update", "cluster2", "", 0)
+	assertWorkDeployment(t, controller.kubeClient.Actions(), "update", "cluster2", "", 0, "", "")
 
 	// Update klusterlet with different cluster name and rerun sync
 	klusterlet = newKlusterlet("klusterlet", "testns", "cluster3")
@@ -1260,7 +1330,7 @@ func TestClusterNameChange(t *testing.T) {
 		t.Errorf("Expected non error when sync, %v", err)
 	}
 	assertRegistrationDeployment(t, controller.kubeClient.Actions(), "update", "https://localhost", "cluster3", 1, false)
-	assertWorkDeployment(t, controller.kubeClient.Actions(), "update", "cluster3", "", 0)
+	assertWorkDeployment(t, controller.kubeClient.Actions(), "update", "cluster3", "", 0, "", "")
 }
 
 func TestSyncWithPullSecret(t *testing.T) {
@@ -1359,6 +1429,74 @@ func TestRenderingResourceRequirements(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestClusterClaimConfigInSingletonMode(t *testing.T) {
+	klusterlet := newKlusterlet("klusterlet", "testns", "cluster1")
+	claimConfig := &operatorapiv1.ClusterClaimConfiguration{
+		MaxCustomClusterClaims:       2,
+		ReservedClusterClaimSuffixes: []string{"test1.io", "test2.io"},
+	}
+	if klusterlet.Spec.RegistrationConfiguration == nil {
+		klusterlet.Spec.RegistrationConfiguration = &operatorapiv1.RegistrationConfiguration{}
+	}
+	klusterlet.Spec.RegistrationConfiguration.ClusterClaimConfiguration = claimConfig
+
+	klusterlet.Spec.DeployOption.Mode = operatorapiv1.InstallModeSingleton
+	hubSecret := newSecret(helpers.HubKubeConfig, "testns")
+	hubSecret.Data["kubeconfig"] = []byte("dummykubeconfig")
+	hubSecret.Data["cluster-name"] = []byte("cluster1")
+	objects := []runtime.Object{
+		newNamespace("testns"),
+		newSecret(helpers.BootstrapHubKubeConfig, "testns"),
+		hubSecret,
+	}
+
+	syncContext := testingcommon.NewFakeSyncContext(t, "klusterlet")
+	controller := newTestController(t, klusterlet, syncContext.Recorder(), nil, false,
+		objects...)
+
+	err := controller.controller.sync(context.TODO(), syncContext)
+	if err != nil {
+		t.Errorf("Expected non error when sync, %v", err)
+	}
+
+	assertKlusterletDeployment(t, commonhelpers.CSRAuthType, controller.kubeClient.Actions(), createVerb,
+		"", "cluster1", claimConfig)
+}
+
+// TestSyncEnableClusterProperty test enabling clusterproperty
+func TestSyncEnableClusterProperty(t *testing.T) {
+	klusterlet := newKlusterlet("klusterlet", "testns", "cluster1")
+	klusterlet.Spec.RegistrationConfiguration = &operatorapiv1.RegistrationConfiguration{
+		FeatureGates: []operatorapiv1.FeatureGate{
+			{
+				Feature: string(ocmfeature.ClusterProperty),
+				Mode:    operatorapiv1.FeatureGateModeTypeEnable,
+			},
+		},
+	}
+
+	objects := []runtime.Object{}
+	syncContext := testingcommon.NewFakeSyncContext(t, "klusterlet")
+	controller := newTestController(t, klusterlet, syncContext.Recorder(), nil, false,
+		objects...)
+
+	err := controller.controller.sync(context.TODO(), syncContext)
+	if err != nil {
+		t.Errorf("Expected non error when sync, %v", err)
+	}
+
+	var createCnt int
+	for _, action := range controller.apiExtensionClient.Actions() {
+		if action.GetVerb() == "create" {
+			createCnt++
+		}
+	}
+
+	if createCnt != 3 {
+		t.Errorf("Expected 3 actions, got %d", len(controller.apiExtensionClient.Actions()))
 	}
 }
 
@@ -1483,59 +1621,4 @@ func (f *fakeManagedClusterBuilder) build(_ context.Context) (*managedClusterCli
 		},
 		kubeconfigSecretCreationTime: creationTime,
 	}, nil
-}
-
-func TestGetAppliedManifestWorkEvictionGracePeriod(t *testing.T) {
-	cases := []struct {
-		name                        string
-		klusterlet                  *operatorapiv1.Klusterlet
-		workConfiguration           *operatorapiv1.WorkAgentConfiguration
-		expectedEvictionGracePeriod string
-	}{
-		{
-			name: "klusterlet is nil",
-		},
-		{
-			name:       "without workConfiguration",
-			klusterlet: newKlusterlet("test", "test-ns", "test"),
-		},
-		{
-			name:              "without appliedManifestWorkEvictionGracePeriod",
-			klusterlet:        newKlusterlet("test", "test-ns", "test"),
-			workConfiguration: &operatorapiv1.WorkAgentConfiguration{},
-		},
-		{
-			name:       "with appliedManifestWorkEvictionGracePeriod",
-			klusterlet: newKlusterlet("test", "test-ns", "test"),
-			workConfiguration: &operatorapiv1.WorkAgentConfiguration{
-				AppliedManifestWorkEvictionGracePeriod: &metav1.Duration{
-					Duration: 10 * time.Minute,
-				},
-			},
-			expectedEvictionGracePeriod: "10m",
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if c.klusterlet != nil {
-				c.klusterlet.Spec.WorkConfiguration = c.workConfiguration
-			}
-
-			actualString := getAppliedManifestWorkEvictionGracePeriod(c.klusterlet)
-			if len(actualString) == 0 || len(c.expectedEvictionGracePeriod) == 0 {
-				assert.Equal(t, c.expectedEvictionGracePeriod, actualString)
-			} else {
-				expected, err := time.ParseDuration(c.expectedEvictionGracePeriod)
-				if err != nil {
-					t.Errorf("Failed to parse duration: %s", c.expectedEvictionGracePeriod)
-				}
-				actual, err := time.ParseDuration(actualString)
-				if err != nil {
-					t.Errorf("Failed to parse duration: %s", actualString)
-				}
-				assert.Equal(t, expected, actual)
-			}
-		})
-	}
 }

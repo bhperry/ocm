@@ -11,6 +11,7 @@ import (
 	certificatesv1 "k8s.io/api/certificates/v1"
 
 	addonv1alpha1 "open-cluster-management.io/api/addon/v1alpha1"
+	commonhelpers "open-cluster-management.io/ocm/pkg/common/helpers"
 )
 
 const (
@@ -38,10 +39,14 @@ type addonInstallOption struct {
 }
 
 func (c *registrationConfig) x509Subject(clusterName, agentName string) *pkix.Name {
+	if c.registration.Type != commonhelpers.CSRAuthType {
+		return nil
+	}
+
 	subject := &pkix.Name{
-		CommonName:         c.registration.Subject.User,
-		Organization:       c.registration.Subject.Groups,
-		OrganizationalUnit: c.registration.Subject.OrganizationUnits,
+		CommonName:         c.registration.CSR.Subject.User,
+		Organization:       c.registration.CSR.Subject.Groups,
+		OrganizationalUnit: c.registration.CSR.Subject.OrganizationUnits,
 	}
 
 	// set the default common name
@@ -50,7 +55,7 @@ func (c *registrationConfig) x509Subject(clusterName, agentName string) *pkix.Na
 	}
 
 	// set the default organization if signer is KubeAPIServerClientSignerName
-	if c.registration.SignerName == certificatesv1.KubeAPIServerClientSignerName && len(subject.Organization) == 0 {
+	if c.registration.CSR.SignerName == certificatesv1.KubeAPIServerClientSignerName && len(subject.Organization) == 0 {
 		subject.Organization = []string{defaultOrganization(clusterName, c.addOnName)}
 	}
 
@@ -97,13 +102,17 @@ func getRegistrationConfigs(addOn *addonv1alpha1.ManagedClusterAddOn) (map[strin
 		}
 
 		// set the secret name of client certificate
-		switch registration.SignerName {
-		case certificatesv1.KubeAPIServerClientSignerName:
+		switch registration.Type {
+		case commonhelpers.CSRAuthType:
+			switch registration.CSR.SignerName {
+			case certificatesv1.KubeAPIServerClientSignerName:
+				config.secretName = fmt.Sprintf("%s-hub-kubeconfig", addOn.Name)
+			default:
+				config.secretName = fmt.Sprintf("%s-%s-client-cert", addOn.Name, strings.ReplaceAll(registration.CSR.SignerName, "/", "-"))
+			}
+		case commonhelpers.AwsIrsaAuthType:
 			config.secretName = fmt.Sprintf("%s-hub-kubeconfig", addOn.Name)
-		default:
-			config.secretName = fmt.Sprintf("%s-%s-client-cert", addOn.Name, strings.ReplaceAll(registration.SignerName, "/", "-"))
 		}
-
 		// hash registration configuration, install namespace and addOnAgentRunningOutsideManagedCluster. Use the hash
 		// value as the key of map to make sure each registration configuration and addon installation option is unique
 		hash, err := getConfigHash(

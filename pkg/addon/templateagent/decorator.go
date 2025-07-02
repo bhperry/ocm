@@ -94,7 +94,7 @@ type deploymentDecorator struct {
 
 func newDeploymentDecorator(
 	logger klog.Logger,
-	addonName string,
+	addon *addonapiv1alpha1.ManagedClusterAddOn,
 	template *addonapiv1alpha1.AddOnTemplate,
 	orderedValues orderedValues,
 	privateValues addonfactory.Values,
@@ -103,10 +103,10 @@ func newDeploymentDecorator(
 		logger: logger,
 		decorators: []podTemplateSpecDecorator{
 			newEnvironmentDecorator(orderedValues),
-			newVolumeDecorator(addonName, template),
+			newRegistrationDecorator(addon, template),
 			newNodePlacementDecorator(privateValues),
 			newImageDecorator(privateValues),
-			newProxyHandler(logger, addonName, privateValues),
+			newProxyHandler(logger, addon.Name, privateValues),
 			newResourceRequirementsDecorator(logger, supportResourceDeployment, privateValues),
 		},
 	}
@@ -141,7 +141,7 @@ type daemonSetDecorator struct {
 
 func newDaemonSetDecorator(
 	logger klog.Logger,
-	addonName string,
+	addon *addonapiv1alpha1.ManagedClusterAddOn,
 	template *addonapiv1alpha1.AddOnTemplate,
 	orderedValues orderedValues,
 	privateValues addonfactory.Values,
@@ -150,10 +150,10 @@ func newDaemonSetDecorator(
 		logger: logger,
 		decorators: []podTemplateSpecDecorator{
 			newEnvironmentDecorator(orderedValues),
-			newVolumeDecorator(addonName, template),
+			newRegistrationDecorator(addon, template),
 			newNodePlacementDecorator(privateValues),
 			newImageDecorator(privateValues),
-			newProxyHandler(logger, addonName, privateValues),
+			newProxyHandler(logger, addon.Name, privateValues),
 			newResourceRequirementsDecorator(logger, supportResourceDaemonset, privateValues),
 		},
 	}
@@ -214,20 +214,21 @@ func (d *environmentDecorator) decorate(_ string, pod *corev1.PodTemplateSpec) e
 	return nil
 }
 
-type volumeDecorator struct {
-	template  *addonapiv1alpha1.AddOnTemplate
-	addonName string
+type registrationDecorator struct {
+	template *addonapiv1alpha1.AddOnTemplate
+	addon    *addonapiv1alpha1.ManagedClusterAddOn
 }
 
-func newVolumeDecorator(addonName string, template *addonapiv1alpha1.AddOnTemplate) podTemplateSpecDecorator {
-	return &volumeDecorator{
-		addonName: addonName,
-		template:  template,
+func newRegistrationDecorator(addon *addonapiv1alpha1.ManagedClusterAddOn, template *addonapiv1alpha1.AddOnTemplate) podTemplateSpecDecorator {
+	return &registrationDecorator{
+		addon:    addon,
+		template: template,
 	}
 }
 
-func (d *volumeDecorator) decorate(_ string, pod *corev1.PodTemplateSpec) error {
+func (d *registrationDecorator) decorate(_ string, pod *corev1.PodTemplateSpec) error {
 
+	initContainerMounts := []corev1.Container{}
 	volumeMounts := []corev1.VolumeMount{}
 	volumes := []corev1.Volume{}
 
@@ -241,10 +242,29 @@ func (d *volumeDecorator) decorate(_ string, pod *corev1.PodTemplateSpec) error 
 				Name: "hub-kubeconfig",
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName: HubKubeconfigSecretName(d.addonName),
+						SecretName: HubKubeconfigSecretName(d.addon.Name),
 					},
 				},
 			})
+
+			if registration.KubeClient != nil {
+				for _, registartionConfig := range d.addon.Status.Registrations {
+					if registartionConfig.Type == addonapiv1alpha1.RegistrationAuthTypeAwsIrsa {
+						awsCliInit, awscliVol, awscliMount := loadAwsCli()
+						initContainerMounts = append(initContainerMounts, awsCliInit)
+						volumeMounts = append(
+							volumeMounts,
+							awscliMount,
+							corev1.VolumeMount{
+								Name:      "dot-aws",
+								MountPath: "/.aws",
+							},
+						)
+						volumes = append(volumes, awscliVol, dotAwsVolume(registartionConfig.AwsIrsa))
+						break
+					}
+				}
+			}
 		}
 
 		if registration.Type == addonapiv1alpha1.RegistrationTypeCustomSigner {
@@ -262,7 +282,7 @@ func (d *volumeDecorator) decorate(_ string, pod *corev1.PodTemplateSpec) error 
 				Name: name,
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName: CustomSignedSecretName(d.addonName, registration.CustomSigner.SignerName),
+						SecretName: CustomSignedSecretName(d.addon.Name, registration.CustomSigner.SignerName),
 					},
 				},
 			})
@@ -279,6 +299,7 @@ func (d *volumeDecorator) decorate(_ string, pod *corev1.PodTemplateSpec) error 
 	}
 
 	pod.Spec.Volumes = append(pod.Spec.Volumes, volumes...)
+	pod.Spec.InitContainers = append(pod.Spec.InitContainers, initContainerMounts...)
 
 	return nil
 }
@@ -596,4 +617,45 @@ func proxyCABundleConfigMapDataKey() string {
 
 func proxyCABundleFilePath() string {
 	return path.Join(proxyCABundleConfigMapMountPath(), proxyCABundleConfigMapDataKey())
+}
+
+func dotAwsVolume(awsIrsa *addonapiv1alpha1.AwsIrsaRegistrationConfig) corev1.Volume {
+	var dotAwsSource corev1.VolumeSource
+	if awsIrsa != nil && awsIrsa.IamConfigSecret != "" {
+		dotAwsSource.Secret = &corev1.SecretVolumeSource{
+			SecretName: awsIrsa.IamConfigSecret,
+		}
+	} else {
+		dotAwsSource.EmptyDir = &corev1.EmptyDirVolumeSource{}
+	}
+	return corev1.Volume{
+		Name:         "dot-aws",
+		VolumeSource: dotAwsSource,
+	}
+}
+
+func loadAwsCli() (initContainer corev1.Container, awscliVol corev1.Volume, awscliMount corev1.VolumeMount) {
+	awscliVol = corev1.Volume{
+		Name: "awscli",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+	awscliMount = corev1.VolumeMount{
+		Name:      "awscli",
+		MountPath: "/awscli",
+	}
+	initContainer = corev1.Container{
+		Name: "load-awscli",
+		Command: []string{
+			"cp",
+			"-vr",
+			"/usr/local/aws-cli/v2/current/dist",
+			"/awscli",
+		},
+		Image:        "amazon/aws-cli:latest",
+		VolumeMounts: []corev1.VolumeMount{awscliMount},
+	}
+
+	return
 }
