@@ -4,10 +4,12 @@ import (
 	"fmt"
 
 	certificatesv1 "k8s.io/api/certificates/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	addonapiv1alpha1 "open-cluster-management.io/api/addon/v1alpha1"
 	clusterv1 "open-cluster-management.io/api/cluster/v1"
+	operatorv1 "open-cluster-management.io/api/operator/v1"
 	workapiv1 "open-cluster-management.io/api/work/v1"
 )
 
@@ -110,10 +112,11 @@ type PermissionConfigFunc func(cluster *clusterv1.ManagedCluster, addon *addonap
 // 3. the RBAC setting of agent on the hub
 // 4. how csr is signed if the customized signer is used.
 type RegistrationOption struct {
-	// CSRConfigurations returns a list of csr configuration for the adddon agent in a managed cluster.
-	// A csr will be created from the managed cluster for addon agent with each CSRConfiguration.
+	// Configurations returns a list of registration configuration for the adddon agent in a managed cluster.
+	// For each csr config, a csr will be created from the managed cluster for addon agent
+	// For each awsirsa config, an access entry will be created on the hub cluster for the addon agent
 	// +required
-	CSRConfigurations func(cluster *clusterv1.ManagedCluster) []addonapiv1alpha1.RegistrationConfig
+	Configurations func(cluster *clusterv1.ManagedCluster) []addonapiv1alpha1.RegistrationConfig
 
 	// Namespace is the namespace where registraiton credential will be put on the managed cluster. It
 	// will be overridden by installNamespace on ManagedClusterAddon spec if set
@@ -228,18 +231,39 @@ const (
 	// DaemonSet are supported for now) on the managed cluster.
 	// It's a special case of HealthProberTypeWork.
 	HealthProberTypeWorkloadAvailability HealthProberType = "WorkloadAvailability"
+
+	ManagedClusterIAMRoleSuffix = "managed-cluster-iam-role-suffix"
+	ManagedClusterArn           = "managed-cluster-arn"
 )
 
 func KubeClientSignerConfigurations(addonName, agentName string) func(cluster *clusterv1.ManagedCluster) []addonapiv1alpha1.RegistrationConfig {
 	return func(cluster *clusterv1.ManagedCluster) []addonapiv1alpha1.RegistrationConfig {
-		return []addonapiv1alpha1.RegistrationConfig{
-			{
-				SignerName: certificatesv1.KubeAPIServerClientSignerName,
-				Subject: addonapiv1alpha1.Subject{
-					User:   DefaultUser(cluster.Name, addonName, agentName),
-					Groups: DefaultGroups(cluster.Name, addonName),
+		switch GetRegistrationAuthType(cluster) {
+		case addonapiv1alpha1.RegistrationAuthTypeAwsIrsa:
+			registration := addonapiv1alpha1.RegistrationConfig{
+				Type:    addonapiv1alpha1.RegistrationAuthTypeAwsIrsa,
+				AwsIrsa: &addonapiv1alpha1.AwsIrsaRegistrationConfig{},
+			}
+			if _, arnExists := AwsManagedClusterArn(cluster); !arnExists {
+				// Cluster has no arn, so it is a cluster managed outside of AWS
+				registration.AwsIrsa.IamConfigSecret = DefaultIamConfigSecret(addonName)
+			}
+			return []addonapiv1alpha1.RegistrationConfig{registration}
+		case addonapiv1alpha1.RegistrationAuthTypeCsr:
+			return []addonapiv1alpha1.RegistrationConfig{
+				{
+					Type: addonapiv1alpha1.RegistrationAuthTypeCsr,
+					CSR: &addonapiv1alpha1.CsrRegistrationConfig{
+						SignerName: certificatesv1.KubeAPIServerClientSignerName,
+						Subject: addonapiv1alpha1.Subject{
+							User:   DefaultUser(cluster.Name, addonName, agentName),
+							Groups: DefaultGroups(cluster.Name, addonName),
+						},
+					},
 				},
-			},
+			}
+		default:
+			return nil
 		}
 	}
 }
@@ -258,7 +282,59 @@ func DefaultGroups(clusterName, addonName string) []string {
 	}
 }
 
+// DefaultAwsRbacGroups returns the default groups for AwsIrsa registration
+// EKS access entry group names must be 63 characters or less, and cannot begin with "system:"
+func DefaultAwsRbacGroups(clusterName, addonName string) []string {
+	return []string{
+		fmt.Sprintf("ocm:cluster:%s:addon:%s", clusterName, addonName),
+		fmt.Sprintf("ocm:addon:%s", addonName),
+	}
+}
+
+func DefaultIamConfigSecret(addonName string) string {
+	return fmt.Sprintf("%s-iam-config", addonName)
+}
+
 // ApprovalAllCSRs returns true for all csrs.
 func ApprovalAllCSRs(cluster *clusterv1.ManagedCluster, addon *addonapiv1alpha1.ManagedClusterAddOn, csr *certificatesv1.CertificateSigningRequest) bool {
 	return true
+}
+
+func GetRegistrationAuthType(cluster *clusterv1.ManagedCluster) addonapiv1alpha1.RegistrationAuthType {
+	if _, ok := AwsManagedClusterIamRoleSuffix(cluster); ok {
+		return addonapiv1alpha1.RegistrationAuthTypeAwsIrsa
+	}
+	return addonapiv1alpha1.RegistrationAuthTypeCsr
+}
+
+func AwsManagedClusterIamRoleSuffix(cluster *clusterv1.ManagedCluster) (suffix string, ok bool) {
+	if cluster.Annotations != nil {
+		suffix, ok = cluster.Annotations[operatorv1.ClusterAnnotationsKeyPrefix+"/"+ManagedClusterIAMRoleSuffix]
+	}
+	return suffix, ok
+}
+
+func AwsManagedClusterArn(cluster *clusterv1.ManagedCluster) (arn string, ok bool) {
+	if cluster.Annotations != nil {
+		arn, ok = cluster.Annotations[operatorv1.ClusterAnnotationsKeyPrefix+"/"+ManagedClusterArn]
+	}
+	return arn, ok
+}
+
+func AddonRegistrationSubjects(subject addonapiv1alpha1.Subject) (subjects []rbacv1.Subject) {
+	if subject.User != "" {
+		subjects = append(subjects, rbacv1.Subject{
+			Kind:     rbacv1.UserKind,
+			APIGroup: rbacv1.GroupName,
+			Name:     subject.User,
+		})
+	}
+	for _, group := range subject.Groups {
+		subjects = append(subjects, rbacv1.Subject{
+			Kind:     rbacv1.GroupKind,
+			APIGroup: rbacv1.GroupName,
+			Name:     group,
+		})
+	}
+	return subjects
 }

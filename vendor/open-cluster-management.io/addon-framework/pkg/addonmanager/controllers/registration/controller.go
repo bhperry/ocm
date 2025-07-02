@@ -152,7 +152,7 @@ func (c *addonRegistrationController) sync(ctx context.Context, syncCtx factory.
 		}
 	}
 
-	if registrationOption.CSRConfigurations == nil {
+	if registrationOption.Configurations == nil {
 		meta.SetStatusCondition(&managedClusterAddonCopy.Status.Conditions, metav1.Condition{
 			Type:    addonapiv1alpha1.ManagedClusterAddOnRegistrationApplied,
 			Status:  metav1.ConditionTrue,
@@ -163,7 +163,7 @@ func (c *addonRegistrationController) sync(ctx context.Context, syncCtx factory.
 		return err
 	}
 
-	configs := registrationOption.CSRConfigurations(managedCluster)
+	configs := registrationOption.Configurations(managedCluster)
 	managedClusterAddonCopy.Status.Registrations = configs
 
 	var agentInstallNamespace string

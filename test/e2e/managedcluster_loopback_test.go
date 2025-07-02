@@ -249,7 +249,10 @@ var _ = ginkgo.Describe("Loopback registration [development]", func() {
 		created.Status = addonv1alpha1.ManagedClusterAddOnStatus{
 			Registrations: []addonv1alpha1.RegistrationConfig{
 				{
-					SignerName: certificates.KubeAPIServerClientSignerName,
+					Type: "csr",
+					CSR: &addonv1alpha1.CsrRegistrationConfig{
+						SignerName: certificates.KubeAPIServerClientSignerName,
+					},
 				},
 			},
 		}

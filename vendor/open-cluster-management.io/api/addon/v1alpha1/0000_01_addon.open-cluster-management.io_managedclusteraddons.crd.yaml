@@ -296,44 +296,71 @@ spec:
                   "kubernetes.io/kube-apiserver-client", the secret name will be "{addon name}-hub-kubeconfig" whose contents includes
                   key/cert and kubeconfig. Otherwise, the secret name will be "{addon name}-{signer name}-client-cert" whose contents includes key/cert.
                 items:
-                  description: |-
-                    RegistrationConfig defines the configuration of the addon agent to register to hub. The Klusterlet agent will
-                    create a csr for the addon agent with the registrationConfig.
+                  description: RegistrationConfig defines the configuration of the
+                    addon agent to register to hub.
                   properties:
-                    signerName:
-                      description: signerName is the name of signer that addon agent
-                        will use to create csr.
-                      maxLength: 571
-                      minLength: 5
-                      pattern: ^([a-z0-9][a-z0-9-]*[a-z0-9]\.)+[a-z]+\/[a-z0-9-\.]+$
-                      type: string
-                    subject:
-                      description: |-
-                        subject is the user subject of the addon agent to be registered to the hub.
-                        If it is not set, the addon agent will have the default subject
-                        "subject": {
-                          "user": "system:open-cluster-management:cluster:{clusterName}:addon:{addonName}:agent:{agentName}",
-                          "groups: ["system:open-cluster-management:cluster:{clusterName}:addon:{addonName}",
-                                    "system:open-cluster-management:addon:{addonName}", "system:authenticated"]
-                        }
+                    awsirsa:
+                      description: awsirsa defines configuration for AWS registration
+                        of the addon agent.
                       properties:
-                        groups:
-                          description: groups is the user group of the addon agent.
-                          items:
-                            type: string
-                          type: array
-                        organizationUnit:
-                          description: organizationUnit is the ou of the addon agent
-                          items:
-                            type: string
-                          type: array
-                        user:
-                          description: user is the user name of the addon agent.
+                        iamConfigSecret:
+                          description: |-
+                            IamConfigSecret is the name of a secret containing "config" and/or "credentials" files mounted to ~/.aws/config and ~/.aws/credentials respectively.
+                            More Info: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
                           type: string
                       type: object
+                    csr:
+                      description: |-
+                        csr defines configuration of the csr created by the addon agent.
+                        Required for registrationConfig type "csr"
+                      properties:
+                        signerName:
+                          description: signerName is the name of signer that addon
+                            agent will use to create csr.
+                          maxLength: 571
+                          minLength: 5
+                          pattern: ^([a-z0-9][a-z0-9-]*[a-z0-9]\.)+[a-z]+\/[a-z0-9-\.]+$
+                          type: string
+                        subject:
+                          description: |-
+                            subject is the user subject of the addon agent to be registered to the hub.
+                            If it is not set, the addon agent will have the default subject
+                            "subject": {
+                              "user": "system:open-cluster-management:cluster:{clusterName}:addon:{addonName}:agent:{agentName}",
+                              "groups: ["system:open-cluster-management:cluster:{clusterName}:addon:{addonName}",
+                                        "system:open-cluster-management:addon:{addonName}", "system:authenticated"]
+                            }
+                          properties:
+                            groups:
+                              description: groups is the user group of the addon agent.
+                              items:
+                                type: string
+                              type: array
+                            organizationUnit:
+                              description: organizationUnit is the ou of the addon
+                                agent
+                              items:
+                                type: string
+                              type: array
+                            user:
+                              description: user is the user name of the addon agent.
+                              type: string
+                          type: object
+                      required:
+                      - signerName
+                      type: object
+                    type:
+                      default: csr
+                      enum:
+                      - csr
+                      - awsirsa
+                      type: string
                   required:
-                  - signerName
+                  - type
                   type: object
+                  x-kubernetes-validations:
+                  - message: CSR config is required for csr registration
+                    rule: self.type != 'csr' || self.csr != null
                 type: array
               relatedObjects:
                 description: |-

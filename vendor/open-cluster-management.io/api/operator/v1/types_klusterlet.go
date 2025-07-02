@@ -227,7 +227,8 @@ type AwsIrsa struct {
 
 	// IamConfigSecret is the name of a secret containing "config" and/or "credentials" files mounted to /.aws/config and /.aws/credentials respectively.
 	// More Info: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
-	IamConfigSecret string `json:"iamConfigSecret"`
+	// +optional
+	IamConfigSecret string `json:"iamConfigSecret,omitempty"`
 }
 
 type TypeBootstrapKubeConfigs string
