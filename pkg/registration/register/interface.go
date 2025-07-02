@@ -43,7 +43,7 @@ type SecretOption struct {
 	HubKubeconfigFile string
 	HubKubeconfigDir  string
 
-	// subject of the agent, only used for addon
+	// subject of the agent, only used for CSR addon
 	Subject *pkix.Name
 	// csr signer for the addon
 	Signer string

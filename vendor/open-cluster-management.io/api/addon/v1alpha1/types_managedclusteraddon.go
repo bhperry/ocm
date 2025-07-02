@@ -49,9 +49,33 @@ type ManagedClusterAddOnSpec struct {
 	Configs []AddOnConfig `json:"configs,omitempty"`
 }
 
-// RegistrationConfig defines the configuration of the addon agent to register to hub. The Klusterlet agent will
-// create a csr for the addon agent with the registrationConfig.
+// RegistrationConfig defines the configuration of the addon agent to register to hub.
+// +kubebuilder:validation:XValidation:rule="self.type != 'csr' || self.csr != null",message="CSR config is required for csr registration"
 type RegistrationConfig struct {
+	// +kubebuilder:default:=csr
+	// +kubebuilder:validation:Required
+	// +required
+	Type RegistrationAuthType `json:"type"`
+
+	// csr defines configuration of the csr created by the addon agent.
+	// Required for registrationConfig type "csr"
+	// +optional
+	CSR *CsrRegistrationConfig `json:"csr,omitempty"`
+
+	// awsirsa defines configuration for AWS registration of the addon agent.
+	// +optional
+	AwsIrsa *AwsIrsaRegistrationConfig `json:"awsirsa,omitempty"`
+}
+
+// +kubebuilder:validation:Enum=csr;awsirsa
+type RegistrationAuthType string
+
+const (
+	RegistrationAuthTypeCsr     = "csr"
+	RegistrationAuthTypeAwsIrsa = "awsirsa"
+)
+
+type CsrRegistrationConfig struct {
 	// signerName is the name of signer that addon agent will use to create csr.
 	// +required
 	// +kubebuilder:validation:MaxLength=571
@@ -69,6 +93,13 @@ type RegistrationConfig struct {
 	//
 	// +optional
 	Subject Subject `json:"subject,omitempty"`
+}
+
+type AwsIrsaRegistrationConfig struct {
+	// IamConfigSecret is the name of a secret containing "config" and/or "credentials" files mounted to ~/.aws/config and ~/.aws/credentials respectively.
+	// More Info: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
+	// +optional
+	IamConfigSecret string `json:"iamConfigSecret,omitempty"`
 }
 
 type AddOnConfig struct {

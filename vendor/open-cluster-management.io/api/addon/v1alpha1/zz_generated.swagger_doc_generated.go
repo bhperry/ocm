@@ -350,6 +350,14 @@ func (PlacementStrategy) SwaggerDoc() map[string]string {
 	return map_PlacementStrategy
 }
 
+var map_AwsIrsaRegistrationConfig = map[string]string{
+	"iamConfigSecret": "IamConfigSecret is the name of a secret containing \"config\" and/or \"credentials\" files mounted to ~/.aws/config and ~/.aws/credentials respectively. More Info: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html",
+}
+
+func (AwsIrsaRegistrationConfig) SwaggerDoc() map[string]string {
+	return map_AwsIrsaRegistrationConfig
+}
+
 var map_ConfigReference = map[string]string{
 	"":                       "ConfigReference is a reference to the current add-on configuration. This resource is used to locate the configuration resource for the current add-on.",
 	"lastObservedGeneration": "Deprecated: Use LastAppliedConfig instead lastObservedGeneration is the observed generation of the add-on configuration.",
@@ -359,6 +367,15 @@ var map_ConfigReference = map[string]string{
 
 func (ConfigReference) SwaggerDoc() map[string]string {
 	return map_ConfigReference
+}
+
+var map_CsrRegistrationConfig = map[string]string{
+	"signerName": "signerName is the name of signer that addon agent will use to create csr.",
+	"subject":    "subject is the user subject of the addon agent to be registered to the hub. If it is not set, the addon agent will have the default subject \"subject\": {\n  \"user\": \"system:open-cluster-management:cluster:{clusterName}:addon:{addonName}:agent:{agentName}\",\n  \"groups: [\"system:open-cluster-management:cluster:{clusterName}:addon:{addonName}\",\n            \"system:open-cluster-management:addon:{addonName}\", \"system:authenticated\"]\n}",
+}
+
+func (CsrRegistrationConfig) SwaggerDoc() map[string]string {
+	return map_CsrRegistrationConfig
 }
 
 var map_HealthCheck = map[string]string{
@@ -427,9 +444,9 @@ func (ObjectReference) SwaggerDoc() map[string]string {
 }
 
 var map_RegistrationConfig = map[string]string{
-	"":           "RegistrationConfig defines the configuration of the addon agent to register to hub. The Klusterlet agent will create a csr for the addon agent with the registrationConfig.",
-	"signerName": "signerName is the name of signer that addon agent will use to create csr.",
-	"subject":    "subject is the user subject of the addon agent to be registered to the hub. If it is not set, the addon agent will have the default subject \"subject\": {\n  \"user\": \"system:open-cluster-management:cluster:{clusterName}:addon:{addonName}:agent:{agentName}\",\n  \"groups: [\"system:open-cluster-management:cluster:{clusterName}:addon:{addonName}\",\n            \"system:open-cluster-management:addon:{addonName}\", \"system:authenticated\"]\n}",
+	"":        "RegistrationConfig defines the configuration of the addon agent to register to hub.",
+	"csr":     "csr defines configuration of the csr created by the addon agent. Required for registrationConfig type \"csr\"",
+	"awsirsa": "awsirsa defines configuration for AWS registration of the addon agent.",
 }
 
 func (RegistrationConfig) SwaggerDoc() map[string]string {

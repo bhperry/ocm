@@ -277,11 +277,14 @@ var _ = ginkgo.Describe("Rebootstrap", func() {
 		created.Status = addonv1alpha1.ManagedClusterAddOnStatus{
 			Registrations: []addonv1alpha1.RegistrationConfig{
 				{
-					SignerName: signerName,
-					Subject: addonv1alpha1.Subject{
-						User: addOnName,
-						Groups: []string{
-							addOnName,
+					Type: "csr",
+					CSR: &addonv1alpha1.CsrRegistrationConfig{
+						SignerName: signerName,
+						Subject: addonv1alpha1.Subject{
+							User: addOnName,
+							Groups: []string{
+								addOnName,
+							},
 						},
 					},
 				},

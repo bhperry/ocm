@@ -225,9 +225,10 @@ type AwsIrsa struct {
 	// +kubebuilder:validation:Pattern=`^arn:aws:eks:([a-zA-Z0-9-]+):(\d{12}):cluster/([a-zA-Z0-9-]+)$`
 	ManagedClusterArn string `json:"managedClusterArn"`
 
-	// IamConfigSecret is the name of a secret containing "config" and/or "credentials" files mounted to ~/.aws/config and ~/.aws/credentials respectively.
+	// IamConfigSecret is the name of a secret containing "config" and/or "credentials" files mounted to /.aws/config and /.aws/credentials respectively.
 	// More Info: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
-	IamConfigSecret string `json:"iamConfigSecret"`
+	// +optional
+	IamConfigSecret string `json:"iamConfigSecret,omitempty"`
 }
 
 type TypeBootstrapKubeConfigs string

@@ -71,16 +71,19 @@ func TestTemplateCSRConfigurationsFunc(t *testing.T) {
 			addon: NewFakeTemplateManagedClusterAddon("addon1", "cluster1", "template1", "fakehash"),
 			expectedConfigs: []addonapiv1alpha1.RegistrationConfig{
 				{
-					SignerName: certificates.KubeAPIServerClientSignerName,
-					Subject: addonapiv1alpha1.Subject{
-						User: "system:open-cluster-management:cluster:cluster1:addon:addon1:agent:addon1-agent",
+					Type: "csr",
+					CSR: &addonapiv1alpha1.CsrRegistrationConfig{
+						SignerName: certificates.KubeAPIServerClientSignerName,
+						Subject: addonapiv1alpha1.Subject{
+							User: "system:open-cluster-management:cluster:cluster1:addon:addon1:agent:addon1-agent",
 
-						Groups: []string{
-							"system:open-cluster-management:cluster:cluster1:addon:addon1",
-							"system:open-cluster-management:addon:addon1",
-							"system:authenticated",
+							Groups: []string{
+								"system:open-cluster-management:cluster:cluster1:addon:addon1",
+								"system:open-cluster-management:addon:addon1",
+								"system:authenticated",
+							},
+							OrganizationUnits: []string{},
 						},
-						OrganizationUnits: []string{},
 					},
 				},
 			},
@@ -110,14 +113,17 @@ func TestTemplateCSRConfigurationsFunc(t *testing.T) {
 			addon: NewFakeTemplateManagedClusterAddon("addon1", "cluster1", "template1", "fakehash"),
 			expectedConfigs: []addonapiv1alpha1.RegistrationConfig{
 				{
-					SignerName: "s1",
-					Subject: addonapiv1alpha1.Subject{
-						User: "u1",
-						Groups: []string{
-							"g1",
-							"g2",
+					Type: "csr",
+					CSR: &addonapiv1alpha1.CsrRegistrationConfig{
+						SignerName: "s1",
+						Subject: addonapiv1alpha1.Subject{
+							User: "u1",
+							Groups: []string{
+								"g1",
+								"g2",
+							},
+							OrganizationUnits: []string{},
 						},
-						OrganizationUnits: []string{},
 					},
 				},
 			},
@@ -137,7 +143,7 @@ func TestTemplateCSRConfigurationsFunc(t *testing.T) {
 		}
 
 		agent := NewCRDTemplateAgentAddon(ctx, c.addon.Name, nil, addonClient, addonInformerFactory, nil, nil)
-		f := agent.TemplateCSRConfigurationsFunc()
+		f := agent.TemplateConfigurationsFunc()
 		registrationConfigs := f(c.cluster)
 		if !equality.Semantic.DeepEqual(registrationConfigs, c.expectedConfigs) {
 			t.Errorf("expected registrationConfigs %v, but got %v", c.expectedConfigs, registrationConfigs)

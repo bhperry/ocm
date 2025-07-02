@@ -73,6 +73,10 @@ func (c *AWSIRSADriver) BuildKubeConfigFromTemplate(kubeConfig *clientcmdapi.Con
 				"--role",
 				fmt.Sprintf("arn:aws:iam::%s:role/ocm-hub-%s", hubClusterAccountId, c.managedClusterRoleSuffix),
 			},
+			Env: []clientcmdapi.ExecEnvVar{
+				{Name: "AWS_CONFIG_FILE", Value: "/.aws/config"},
+				{Name: "AWS_SHARED_CREDENTIALS_FILE", Value: "/.aws/credentials"},
+			},
 		},
 	}}
 	return kubeConfig
@@ -110,6 +114,17 @@ func (c *AWSIRSADriver) BuildClients(_ context.Context, secretOption register.Se
 		return nil, fmt.Errorf("failed to create AWS IRSA control: %w", err)
 	}
 	return clients, nil
+}
+
+func (c *AWSIRSADriver) Fork(addonName string, secretOption register.SecretOption) register.RegisterDriver {
+	driver := &AWSIRSADriver{
+		name:                     secretOption.ClusterName,
+		managedClusterArn:        c.managedClusterArn,
+		managedClusterRoleSuffix: fmt.Sprintf("%s-%s", addonName, c.managedClusterRoleSuffix),
+		hubClusterArn:            c.hubClusterArn,
+		awsIRSAControl:           c.awsIRSAControl,
+	}
+	return driver
 }
 
 func NewAWSIRSADriver(opt *AWSOption, secretOption register.SecretOption) register.RegisterDriver {
