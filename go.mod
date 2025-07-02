@@ -2,7 +2,11 @@ module open-cluster-management.io/ocm
 
 go 1.23.6
 
-replace open-cluster-management.io/api => /home/bhperry/go/src/open-cluster-management.io/api
+// TODO: Remove before merging
+replace (
+	open-cluster-management.io/api => /home/bhperry/go/src/open-cluster-management.io/api
+	open-cluster-management.io/addon-framework => /home/bhperry/workspace/ocm-addon-framework
+)
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.36.3

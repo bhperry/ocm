@@ -24,13 +24,19 @@ func TestRegistrationSync(t *testing.T) {
 	signerName := "signer1"
 
 	config1 := addonv1alpha1.RegistrationConfig{
-		SignerName: signerName,
+		Type: "csr",
+		CSR: &addonv1alpha1.CsrRegistrationConfig{
+			SignerName: signerName,
+		},
 	}
 
 	config2 := addonv1alpha1.RegistrationConfig{
-		SignerName: signerName,
-		Subject: addonv1alpha1.Subject{
-			User: addOnName,
+		Type: "csr",
+		CSR: &addonv1alpha1.CsrRegistrationConfig{
+			SignerName: signerName,
+			Subject: addonv1alpha1.Subject{
+				User: addOnName,
+			},
 		},
 	}
 

@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"open-cluster-management.io/addon-framework/pkg/utils"
 	addonapiv1alpha1 "open-cluster-management.io/api/addon/v1alpha1"
 	clusterv1 "open-cluster-management.io/api/cluster/v1"
+	commonhelpers "open-cluster-management.io/ocm/pkg/common/helpers"
 )
 
 const (
@@ -86,7 +88,7 @@ func (a *CRDTemplateAgentAddon) GetDesiredAddOnTemplate(addon *addonapiv1alpha1.
 	return a.getDesiredAddOnTemplateInner(cma.Name, configReferences)
 }
 
-func (a *CRDTemplateAgentAddon) TemplateCSRConfigurationsFunc() func(cluster *clusterv1.ManagedCluster) []addonapiv1alpha1.RegistrationConfig {
+func (a *CRDTemplateAgentAddon) TemplateConfigurationsFunc() func(cluster *clusterv1.ManagedCluster) []addonapiv1alpha1.RegistrationConfig {
 
 	return func(cluster *clusterv1.ManagedCluster) []addonapiv1alpha1.RegistrationConfig {
 		template, err := a.GetDesiredAddOnTemplate(nil, cluster.Name, a.addonName)
@@ -98,20 +100,28 @@ func (a *CRDTemplateAgentAddon) TemplateCSRConfigurationsFunc() func(cluster *cl
 			return nil
 		}
 
-		contain := func(rcs []addonapiv1alpha1.RegistrationConfig, signerName string) bool {
-			for _, rc := range rcs {
-				if rc.SignerName == signerName {
-					return true
-				}
+		isCsrSigner := func(signerName string) func(rc addonapiv1alpha1.RegistrationConfig) bool {
+			return func(rc addonapiv1alpha1.RegistrationConfig) bool {
+				return (rc.Type == addonapiv1alpha1.RegistrationAuthTypeCsr &&
+					rc.CSR != nil && rc.CSR.SignerName == signerName)
 			}
-			return false
 		}
 
 		registrationConfigs := make([]addonapiv1alpha1.RegistrationConfig, 0)
 		for _, registration := range template.Spec.Registration {
 			switch registration.Type {
 			case addonapiv1alpha1.RegistrationTypeKubeClient:
-				if !contain(registrationConfigs, certificatesv1.KubeAPIServerClientSignerName) {
+				addConfig := false
+				switch agent.GetRegistrationAuthType(cluster) {
+				case addonapiv1alpha1.RegistrationAuthTypeCsr:
+					addConfig = slices.ContainsFunc(registrationConfigs, isCsrSigner(certificatesv1.KubeAPIServerClientSignerName))
+				case addonapiv1alpha1.RegistrationAuthTypeAwsIrsa:
+					addConfig = slices.ContainsFunc(registrationConfigs, func(rc addonapiv1alpha1.RegistrationConfig) bool {
+						return rc.Type == addonapiv1alpha1.RegistrationAuthTypeAwsIrsa
+					})
+				}
+
+				if addConfig {
 					configs := agent.KubeClientSignerConfigurations(a.addonName, a.agentName)(cluster)
 					registrationConfigs = append(registrationConfigs, configs...)
 				}
@@ -120,7 +130,7 @@ func (a *CRDTemplateAgentAddon) TemplateCSRConfigurationsFunc() func(cluster *cl
 				if registration.CustomSigner == nil {
 					continue
 				}
-				if !contain(registrationConfigs, registration.CustomSigner.SignerName) {
+				if !slices.ContainsFunc(registrationConfigs, isCsrSigner(registration.CustomSigner.SignerName)) {
 					configs := CustomSignerConfigurations(
 						a.addonName, a.agentName, registration.CustomSigner)(cluster)
 					registrationConfigs = append(registrationConfigs, configs...)
@@ -146,15 +156,19 @@ func CustomSignerConfigurations(addonName, agentName string,
 			utilruntime.HandleError(fmt.Errorf("custome signer is nil"))
 		}
 		config := addonapiv1alpha1.RegistrationConfig{
-			SignerName: customSignerConfig.SignerName,
-			// TODO: confirm the subject
-			Subject: addonapiv1alpha1.Subject{
-				User:   agent.DefaultUser(cluster.Name, addonName, agentName),
-				Groups: agent.DefaultGroups(cluster.Name, addonName),
+			Type: commonhelpers.CSRAuthType,
+			CSR: &addonapiv1alpha1.CsrRegistrationConfig{
+
+				SignerName: customSignerConfig.SignerName,
+				// TODO: confirm the subject
+				Subject: addonapiv1alpha1.Subject{
+					User:   agent.DefaultUser(cluster.Name, addonName, agentName),
+					Groups: agent.DefaultGroups(cluster.Name, addonName),
+				},
 			},
 		}
 		if customSignerConfig.Subject != nil {
-			config.Subject = *customSignerConfig.Subject
+			config.CSR.Subject = *customSignerConfig.Subject
 		}
 
 		return []addonapiv1alpha1.RegistrationConfig{config}
@@ -413,7 +427,7 @@ func (a *CRDTemplateAgentAddon) createKubeClientPermissions(
 				APIGroup: rbacv1.GroupName,
 				Name:     pc.CurrentCluster.ClusterRoleName,
 			}
-			err := a.createPermissionBinding(cluster.Name, addon.Name, cluster.Name, roleRef, &owner)
+			err := a.createPermissionBinding(cluster, addon, cluster.Name, roleRef, &owner)
 			if err != nil {
 				return err
 			}
@@ -424,7 +438,7 @@ func (a *CRDTemplateAgentAddon) createKubeClientPermissions(
 
 			// set owner reference nil since the rolebinding has different namespace with the ManagedClusterAddon
 			// TODO: cleanup the rolebinding when the addon is deleted
-			err := a.createPermissionBinding(cluster.Name, addon.Name,
+			err := a.createPermissionBinding(cluster, addon,
 				pc.SingleNamespace.Namespace, pc.SingleNamespace.RoleRef, nil)
 			if err != nil {
 				return err
@@ -434,16 +448,19 @@ func (a *CRDTemplateAgentAddon) createKubeClientPermissions(
 	return nil
 }
 
-func (a *CRDTemplateAgentAddon) createPermissionBinding(clusterName, addonName, namespace string,
+func (a *CRDTemplateAgentAddon) createPermissionBinding(
+	cluster *clusterv1.ManagedCluster,
+	addon *addonapiv1alpha1.ManagedClusterAddOn,
+	namespace string,
 	roleRef rbacv1.RoleRef, owner *metav1.OwnerReference) error {
 
 	binding := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("open-cluster-management:%s:%s:agent",
-				addonName, strings.ToLower(roleRef.Kind)),
+				addon.Name, strings.ToLower(roleRef.Kind)),
 			Namespace: namespace,
 			Labels: map[string]string{
-				addonapiv1alpha1.AddonLabelKey: addonName,
+				addonapiv1alpha1.AddonLabelKey: addon.Name,
 				AddonTemplateLabelKey:          "",
 			},
 		},
@@ -452,10 +469,23 @@ func (a *CRDTemplateAgentAddon) createPermissionBinding(clusterName, addonName, 
 			{
 				Kind:     rbacv1.GroupKind,
 				APIGroup: rbacv1.GroupName,
-				Name:     clusterAddonGroup(clusterName, addonName),
+				Name:     clusterAddonGroup(cluster.Name, addon.Name),
 			},
 		},
 	}
+
+	switch agent.GetRegistrationAuthType(cluster) {
+	case addonapiv1alpha1.RegistrationAuthTypeAwsIrsa:
+		awsGroups := agent.DefaultAwsRbacGroups(cluster.Name, addon.Name)
+		for _, group := range awsGroups {
+			binding.Subjects = append(binding.Subjects, rbacv1.Subject{
+				Kind:     rbacv1.GroupKind,
+				APIGroup: rbacv1.GroupName,
+				Name:     group,
+			})
+		}
+	}
+
 	if owner != nil {
 		binding.OwnerReferences = []metav1.OwnerReference{*owner}
 	}
@@ -464,7 +494,7 @@ func (a *CRDTemplateAgentAddon) createPermissionBinding(clusterName, addonName, 
 		a.hubKubeClient.RbacV1(), a.eventRecorder, binding)
 	if err == nil && modified {
 		a.logger.Info("Rolebinding for addon updated", "namespace", binding.Namespace, "name", binding.Name,
-			"clusterName", clusterName, "addonName", addonName)
+			"clusterName", cluster.Name, "addonName", addon.Name)
 	}
 	return err
 }

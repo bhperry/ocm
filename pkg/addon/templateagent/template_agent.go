@@ -136,7 +136,7 @@ func (a *CRDTemplateAgentAddon) GetAgentAddonOptions() agent.AgentAddonOptions {
 		HostedModeInfoFunc:  addonconstants.GetHostedModeInfo,
 		SupportedConfigGVRs: supportedConfigGVRs,
 		Registration: &agent.RegistrationOption{
-			CSRConfigurations:     a.TemplateCSRConfigurationsFunc(),
+			Configurations:        a.TemplateConfigurationsFunc(),
 			PermissionConfig:      a.TemplatePermissionConfigFunc(),
 			CSRApproveCheck:       a.TemplateCSRApproveCheckFunc(),
 			CSRSign:               a.TemplateCSRSignFunc(),
@@ -191,7 +191,7 @@ func (a *CRDTemplateAgentAddon) renderObjects(
 			return objects, err
 		}
 
-		object, err = a.decorateObject(template, object, presetValues, privateValues)
+		object, err = a.decorateObject(addon, template, object, presetValues, privateValues)
 		if err != nil {
 			return objects, err
 		}
@@ -208,13 +208,14 @@ func (a *CRDTemplateAgentAddon) renderObjects(
 }
 
 func (a *CRDTemplateAgentAddon) decorateObject(
+	addon *addonapiv1alpha1.ManagedClusterAddOn,
 	template *addonapiv1alpha1.AddOnTemplate,
 	obj *unstructured.Unstructured,
 	orderedValues orderedValues,
 	privateValues addonfactory.Values) (*unstructured.Unstructured, error) {
 	decorators := []decorator{
-		newDeploymentDecorator(a.logger, a.addonName, template, orderedValues, privateValues),
-		newDaemonSetDecorator(a.logger, a.addonName, template, orderedValues, privateValues),
+		newDeploymentDecorator(a.logger, addon, template, orderedValues, privateValues),
+		newDaemonSetDecorator(a.logger, addon, template, orderedValues, privateValues),
 		newNamespaceDecorator(privateValues),
 	}
 

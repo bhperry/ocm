@@ -343,7 +343,7 @@ spec:
                             type: string
                           iamConfigSecret:
                             description: |-
-                              IamConfigSecret is the name of a secret containing "config" and/or "credentials" files mounted to ~/.aws/config and ~/.aws/credentials respectively.
+                              IamConfigSecret is the name of a secret containing "config" and/or "credentials" files mounted to /.aws/config and /.aws/credentials respectively.
                               More Info: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
                             type: string
                           managedClusterArn:

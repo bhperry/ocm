@@ -387,7 +387,7 @@ func (o *SpokeAgentConfig) RunSpokeAgentWithSpokeInformers(ctx context.Context,
 			recorder,
 		)
 
-		// addon registration only enabled when the registration driver is csr.
+		// addon registration only enabled when the registration driver implements AddonDriver.
 		if addonDriver, ok := o.driver.(register.AddonDriver); ok {
 			addOnRegistrationController = addon.NewAddOnRegistrationController(
 				o.agentOptions.SpokeClusterName,

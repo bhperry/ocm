@@ -210,7 +210,7 @@ func (WorkConfiguration) SwaggerDoc() map[string]string {
 var map_AwsIrsa = map[string]string{
 	"hubClusterArn":     "The arn of the hub cluster (ie: an EKS cluster). This will be required to pass information to hub, which hub will use to create IAM identities for this klusterlet. Example - arn:eks:us-west-2:12345678910:cluster/hub-cluster1.",
 	"managedClusterArn": "The arn of the managed cluster (ie: an EKS cluster). This will be used when managed IAM is enabled to generate the md5hash as a suffix to create IAM role on hub as well as used by kluslerlet-agent, to assume role suffixed with the md5hash, on startup. Example - arn:eks:us-west-2:12345678910:cluster/managed-cluster1.",
-	"iamConfigSecret":   "IamConfigSecret is the name of a secret containing \"config\" and/or \"credentials\" files mounted to ~/.aws/config and ~/.aws/credentials respectively. More Info: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html",
+	"iamConfigSecret":   "IamConfigSecret is the name of a secret containing \"config\" and/or \"credentials\" files mounted to /.aws/config and /.aws/credentials respectively. More Info: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html",
 }
 
 func (AwsIrsa) SwaggerDoc() map[string]string {
