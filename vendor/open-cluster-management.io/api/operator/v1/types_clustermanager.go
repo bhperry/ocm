@@ -236,17 +236,6 @@ const (
 type DefaultClusterManagerConfiguration struct {
 	// RegistrationWebhookConfiguration represents the customized webhook-server configuration of registration.
 	// +optional
-	RegistrationWebhookConfiguration WebhookDefaultConfiguration `json:"registrationWebhookConfiguration,omitempty"`
-
-	// WorkWebhookConfiguration represents the customized webhook-server configuration of work.
-	// +optional
-	WorkWebhookConfiguration WebhookDefaultConfiguration `json:"workWebhookConfiguration,omitempty"`
-}
-
-// HostedClusterManagerConfiguration represents customized configurations we need to set for clustermanager in the Hosted mode.
-type HostedClusterManagerConfiguration struct {
-	// RegistrationWebhookConfiguration represents the customized webhook-server configuration of registration.
-	// +optional
 	RegistrationWebhookConfiguration WebhookConfiguration `json:"registrationWebhookConfiguration,omitempty"`
 
 	// WorkWebhookConfiguration represents the customized webhook-server configuration of work.
@@ -254,11 +243,30 @@ type HostedClusterManagerConfiguration struct {
 	WorkWebhookConfiguration WebhookConfiguration `json:"workWebhookConfiguration,omitempty"`
 }
 
-// WebhookDefaultConfiguration represents configuration for webhooks running in "Default" mode in the hub cluster
-type WebhookDefaultConfiguration struct {
-	// Port represents the port of a webhook-server. The default value of Port is 9443.
+// HostedClusterManagerConfiguration represents customized configurations we need to set for clustermanager in the Hosted mode.
+type HostedClusterManagerConfiguration struct {
+	// RegistrationWebhookConfiguration represents the customized webhook-server configuration of registration.
 	// +optional
-	// +kubebuilder:default=9443
+	// +kubebuilder:validation:XValidation:rule="self.address != ''",message="Address is required for hosted webhook configuration"
+	RegistrationWebhookConfiguration WebhookConfiguration `json:"registrationWebhookConfiguration,omitempty"`
+
+	// WorkWebhookConfiguration represents the customized webhook-server configuration of work.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="self.address != ''",message="Address is required for hosted webhook configuration"
+	WorkWebhookConfiguration WebhookConfiguration `json:"workWebhookConfiguration,omitempty"`
+}
+
+// WebhookConfiguration represents customization of webhook servers
+type WebhookConfiguration struct {
+	// Address represents the address of a webhook-server.
+	// It could be in IP format or fqdn format.
+	// The Address must be reachable by apiserver of the hub cluster.
+	// +optional
+	// +kubebuilder:validation:Pattern=^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$
+	Address string `json:"address"`
+
+	// Port represents the port of a webhook-server. The default value of Port is 9443 in default mode, or 443 in hosted mode.
+	// +optional
 	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port,omitempty"`
 
@@ -279,23 +287,6 @@ type WebhookDefaultConfiguration struct {
 	// to allow the API Server to communicate with the webhook pods.
 	// +optional
 	HostNetwork bool `json:"hostNetwork,omitempty"`
-}
-
-// WebhookConfiguration has two properties: Address and Port.
-type WebhookConfiguration struct {
-	// Address represents the address of a webhook-server.
-	// It could be in IP format or fqdn format.
-	// The Address must be reachable by apiserver of the hub cluster.
-	// +required
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$
-	Address string `json:"address"`
-
-	// Port represents the port of a webhook-server. The default value of Port is 443.
-	// +optional
-	// +kubebuilder:default=443
-	// +kubebuilder:validation:Maximum=65535
-	Port int32 `json:"port,omitempty"`
 }
 
 // ClusterManagerDeployOption describes the deployment options for cluster-manager

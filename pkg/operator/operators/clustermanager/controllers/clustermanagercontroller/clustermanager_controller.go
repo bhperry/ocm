@@ -42,6 +42,7 @@ const (
 	clusterManagerFinalizer = "operator.open-cluster-management.io/cluster-manager-cleanup"
 
 	defaultWebhookPort         = int32(9443)
+	defaultHostedWebhookPort   = int32(443)
 	defaultHealthProbeBindAddr = ":8000"
 	defaultMetricsBindAddr     = ":8080"
 	clusterManagerReSyncTime   = 5 * time.Second
@@ -369,6 +370,10 @@ func ensureSAKubeconfigs(ctx context.Context, clusterManagerName, clusterManager
 
 // TODO: support IPV6 address
 func isIPFormat(address string) bool {
+	if address == "" {
+		return false
+	}
+
 	runes := []rune(address)
 	for i := 0; i < len(runes); i++ {
 		if (runes[i] < '0' || runes[i] > '9') && runes[i] != '.' {
@@ -379,51 +384,48 @@ func isIPFormat(address string) bool {
 }
 
 func webhookConfigurations(deployOption operatorapiv1.ClusterManagerDeployOption) (registration, work manifests.Webhook) {
-	switch deployOption.Mode {
-	case operatorapiv1.InstallModeDefault:
-		if deployOption.Default == nil {
-			registration.Port = defaultWebhookPort
-			registration.HealthProbeBindAddress = defaultHealthProbeBindAddr
-			registration.MetricsBindAddress = defaultMetricsBindAddr
-			work.Port = defaultWebhookPort
-			work.HealthProbeBindAddress = defaultHealthProbeBindAddr
-			work.MetricsBindAddress = defaultMetricsBindAddr
-		} else {
-			registration = convertDefaultWebhookConfiguration(deployOption.Default.RegistrationWebhookConfiguration)
-			work = convertDefaultWebhookConfiguration(deployOption.Default.WorkWebhookConfiguration)
+	if deployOption.Mode == operatorapiv1.InstallModeDefault && deployOption.Default != nil {
+		registration = convertWebhookConfiguration(deployOption.Mode, deployOption.Default.RegistrationWebhookConfiguration)
+		work = convertWebhookConfiguration(deployOption.Mode, deployOption.Default.WorkWebhookConfiguration)
+	} else if deployOption.Mode == operatorapiv1.InstallModeHosted && deployOption.Hosted != nil {
+		registration = convertWebhookConfiguration(deployOption.Mode, deployOption.Hosted.RegistrationWebhookConfiguration)
+		work = convertWebhookConfiguration(deployOption.Mode, deployOption.Hosted.WorkWebhookConfiguration)
+	} else {
+		defaultPort := getDefaultWebhookPort(deployOption.Mode)
+		registration = manifests.Webhook{
+			Port:                   defaultPort,
+			HealthProbeBindAddress: defaultHealthProbeBindAddr,
+			MetricsBindAddress:     defaultMetricsBindAddr,
 		}
-	case operatorapiv1.InstallModeHosted:
-		if deployOption.Hosted == nil {
-			registration.Port = defaultWebhookPort
-			work.Port = defaultWebhookPort
-		} else {
-			registration = convertHostedWebhookConfiguration(deployOption.Hosted.RegistrationWebhookConfiguration)
-			work = convertHostedWebhookConfiguration(deployOption.Hosted.WorkWebhookConfiguration)
+		work = manifests.Webhook{
+			Port:                   defaultPort,
+			HealthProbeBindAddress: defaultHealthProbeBindAddr,
+			MetricsBindAddress:     defaultMetricsBindAddr,
 		}
 	}
 	return registration, work
 }
 
-func convertHostedWebhookConfiguration(webhookConfiguration operatorapiv1.WebhookConfiguration) manifests.Webhook {
-	// If we are deploying in the hosted mode, it requires us to create webhook in a different way with the default mode.
-	// In the hosted mode, the webhook servers is running in the management cluster but the users are accessing the hub cluster.
-	// So we need to add configuration to make the apiserver of the hub cluster could access the webhook servers on the management cluster.
-	return manifests.Webhook{
-		Address:    webhookConfiguration.Address,
-		Port:       webhookConfiguration.Port,
-		IsIPFormat: isIPFormat(webhookConfiguration.Address),
+func convertWebhookConfiguration(mode operatorapiv1.InstallMode, webhookConfiguration operatorapiv1.WebhookConfiguration) manifests.Webhook {
+	port := webhookConfiguration.Port
+	if port == 0 {
+		port = getDefaultWebhookPort(mode)
 	}
-}
-
-func convertDefaultWebhookConfiguration(webhookConfiguration operatorapiv1.WebhookDefaultConfiguration) manifests.Webhook {
-	// In default mode, webhooks run inside the hub cluster.
-	// These configurations allow the webhooks to configured for different kubernetes environements.
 	return manifests.Webhook{
-		Port:                   webhookConfiguration.Port,
+		Address:                webhookConfiguration.Address,
+		Port:                   port,
+		IsIPFormat:             isIPFormat(webhookConfiguration.Address),
 		HealthProbeBindAddress: webhookConfiguration.HealthProbeBindAddress,
 		MetricsBindAddress:     webhookConfiguration.MetricsBindAddress,
 		HostNetwork:            webhookConfiguration.HostNetwork,
 	}
+}
+
+func getDefaultWebhookPort(mode operatorapiv1.InstallMode) int32 {
+	if mode == operatorapiv1.InstallModeHosted {
+		return defaultHostedWebhookPort
+	}
+	return defaultWebhookPort
 }
 
 // clean specified resources

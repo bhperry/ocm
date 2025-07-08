@@ -99,6 +99,13 @@ spec:
                         description: RegistrationWebhookConfiguration represents the
                           customized webhook-server configuration of registration.
                         properties:
+                          address:
+                            description: |-
+                              Address represents the address of a webhook-server.
+                              It could be in IP format or fqdn format.
+                              The Address must be reachable by apiserver of the hub cluster.
+                            pattern: ^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$
+                            type: string
                           healthProbeBindAddress:
                             default: :8000
                             description: |-
@@ -118,9 +125,9 @@ spec:
                               Metrics may be disabled by setting a value of "0" or "".
                             type: string
                           port:
-                            default: 9443
                             description: Port represents the port of a webhook-server.
-                              The default value of Port is 9443.
+                              The default value of Port is 9443 in default mode, or
+                              443 in hosted mode.
                             format: int32
                             maximum: 65535
                             type: integer
@@ -129,6 +136,13 @@ spec:
                         description: WorkWebhookConfiguration represents the customized
                           webhook-server configuration of work.
                         properties:
+                          address:
+                            description: |-
+                              Address represents the address of a webhook-server.
+                              It could be in IP format or fqdn format.
+                              The Address must be reachable by apiserver of the hub cluster.
+                            pattern: ^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$
+                            type: string
                           healthProbeBindAddress:
                             default: :8000
                             description: |-
@@ -148,9 +162,9 @@ spec:
                               Metrics may be disabled by setting a value of "0" or "".
                             type: string
                           port:
-                            default: 9443
                             description: Port represents the port of a webhook-server.
-                              The default value of Port is 9443.
+                              The default value of Port is 9443 in default mode, or
+                              443 in hosted mode.
                             format: int32
                             maximum: 65535
                             type: integer
@@ -171,16 +185,35 @@ spec:
                               The Address must be reachable by apiserver of the hub cluster.
                             pattern: ^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$
                             type: string
+                          healthProbeBindAddress:
+                            default: :8000
+                            description: |-
+                              HealthProbeBindAddress represents the healthcheck address of a webhook-server. The default value is ":8000".
+                              Healthchecks may be disabled by setting a value of "0" or "".
+                            type: string
+                          hostNetwork:
+                            description: |-
+                              HostNetwork enables running webhook pods with hostNetwork: true
+                              This may be required in some installations, such as EKS with Calico CNI,
+                              to allow the API Server to communicate with the webhook pods.
+                            type: boolean
+                          metricsBindAddress:
+                            default: :8080
+                            description: |-
+                              MetricsBindAddress represents the metrics address of a webhook-server. The default value is ":8080"
+                              Metrics may be disabled by setting a value of "0" or "".
+                            type: string
                           port:
-                            default: 443
                             description: Port represents the port of a webhook-server.
-                              The default value of Port is 443.
+                              The default value of Port is 9443 in default mode, or
+                              443 in hosted mode.
                             format: int32
                             maximum: 65535
                             type: integer
-                        required:
-                        - address
                         type: object
+                        x-kubernetes-validations:
+                        - message: Address is required for hosted webhook configuration
+                          rule: self.address != ''
                       workWebhookConfiguration:
                         description: WorkWebhookConfiguration represents the customized
                           webhook-server configuration of work.
@@ -192,16 +225,35 @@ spec:
                               The Address must be reachable by apiserver of the hub cluster.
                             pattern: ^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$
                             type: string
+                          healthProbeBindAddress:
+                            default: :8000
+                            description: |-
+                              HealthProbeBindAddress represents the healthcheck address of a webhook-server. The default value is ":8000".
+                              Healthchecks may be disabled by setting a value of "0" or "".
+                            type: string
+                          hostNetwork:
+                            description: |-
+                              HostNetwork enables running webhook pods with hostNetwork: true
+                              This may be required in some installations, such as EKS with Calico CNI,
+                              to allow the API Server to communicate with the webhook pods.
+                            type: boolean
+                          metricsBindAddress:
+                            default: :8080
+                            description: |-
+                              MetricsBindAddress represents the metrics address of a webhook-server. The default value is ":8080"
+                              Metrics may be disabled by setting a value of "0" or "".
+                            type: string
                           port:
-                            default: 443
                             description: Port represents the port of a webhook-server.
-                              The default value of Port is 443.
+                              The default value of Port is 9443 in default mode, or
+                              443 in hosted mode.
                             format: int32
                             maximum: 65535
                             type: integer
-                        required:
-                        - address
                         type: object
+                        x-kubernetes-validations:
+                        - message: Address is required for hosted webhook configuration
+                          rule: self.address != ''
                     type: object
                   mode:
                     default: Default
