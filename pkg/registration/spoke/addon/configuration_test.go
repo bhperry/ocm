@@ -48,7 +48,10 @@ func TestGetRegistrationConfigs(t *testing.T) {
 				Status: addonv1alpha1.ManagedClusterAddOnStatus{
 					Registrations: []addonv1alpha1.RegistrationConfig{
 						{
-							SignerName: certificates.KubeAPIServerClientSignerName,
+							Type: "csr",
+							CSR: &addonv1alpha1.CsrRegistrationConfig{
+								SignerName: certificates.KubeAPIServerClientSignerName,
+							},
 						},
 					},
 				},
@@ -68,7 +71,10 @@ func TestGetRegistrationConfigs(t *testing.T) {
 				Status: addonv1alpha1.ManagedClusterAddOnStatus{
 					Registrations: []addonv1alpha1.RegistrationConfig{
 						{
-							SignerName: certificates.KubeAPIServerClientSignerName,
+							Type: "csr",
+							CSR: &addonv1alpha1.CsrRegistrationConfig{
+								SignerName: certificates.KubeAPIServerClientSignerName,
+							},
 						},
 					},
 					Namespace: addOnNamespace,
@@ -94,7 +100,10 @@ func TestGetRegistrationConfigs(t *testing.T) {
 				Status: addonv1alpha1.ManagedClusterAddOnStatus{
 					Registrations: []addonv1alpha1.RegistrationConfig{
 						{
-							SignerName: certificates.KubeAPIServerClientSignerName,
+							Type: "csr",
+							CSR: &addonv1alpha1.CsrRegistrationConfig{
+								SignerName: certificates.KubeAPIServerClientSignerName,
+							},
 						},
 					},
 				},
@@ -116,7 +125,10 @@ func TestGetRegistrationConfigs(t *testing.T) {
 				Status: addonv1alpha1.ManagedClusterAddOnStatus{
 					Registrations: []addonv1alpha1.RegistrationConfig{
 						{
-							SignerName: "mysigner",
+							Type: "csr",
+							CSR: &addonv1alpha1.CsrRegistrationConfig{
+								SignerName: "mysigner",
+							},
 						},
 					},
 				},
@@ -149,10 +161,13 @@ func TestGetRegistrationConfigs(t *testing.T) {
 func newRegistrationConfig(addOnName, addOnNamespace, signerName, commonName string, organization []string,
 	addOnAgentRunningOutsideManagedCluster bool) registrationConfig {
 	registration := addonv1alpha1.RegistrationConfig{
-		SignerName: signerName,
-		Subject: addonv1alpha1.Subject{
-			User:   commonName,
-			Groups: organization,
+		Type: "csr",
+		CSR: &addonv1alpha1.CsrRegistrationConfig{
+			SignerName: signerName,
+			Subject: addonv1alpha1.Subject{
+				User:   commonName,
+				Groups: organization,
+			},
 		},
 	}
 	config := registrationConfig{
